@@ -21,6 +21,8 @@ _IDENTITY_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
       "教师", "医生", "护士", "研究员", "编辑", "运营", "实习", "会计", "律师"), "worker"),
     (("自由职业", "创作者", "写作者", "画师", "博主", "up主", "主播", "自媒体", "独立开发"), "creator"),
     (("居家", "家庭主妇", "全职妈妈", "全职爸爸", "退休"), "homebody"),
+    # P53：非人类 / AI 群友型人设（如鲸鱼娘），没有固定工作或学业，白天以网络生活与兴趣为主。
+    (("鲸鱼娘", "鲸鱼", "群友", "娘化"), "ai_netizen"),
 )
 # 回落模板按身份定向时只改 work/study 段的方向与地点，时间结构不动。
 # （v1.26.0：身份桶模板词已退出 LLM 生成提示词——见 _identity_note 的说明。）
@@ -29,6 +31,8 @@ _IDENTITY_FALLBACK: dict[str, dict[str, tuple[str, str]]] = {
     "worker": {"work": ("到公司处理工作事务", "公司"), "study": ("学习专业技能或收尾未完成的方案", "公司")},
     "creator": {"work": ("在家处理创作委托", "家里"), "study": ("学新技法并整理素材", "家里")},
     "homebody": {"work": ("打理家务和日常采买", "家里"), "study": ("做兴趣手艺或收拾家里", "家里")},
+    "ai_netizen": {"work": ("认真钻一个自己感兴趣的具体问题，顺手记点笔记", "书桌前"),
+                   "study": ("翻各种乱七八糟的资料，有意思的就多看两眼", "家里")},
 }
 
 
@@ -344,7 +348,7 @@ class ScheduleService:
                             if node.get("kind") not in {"sleep"})[:400]
             if text: recent.append(f"{past}：{text}")
         if recent:
-            blocks.append("最近几天的安排（时间结构可以相似，具体内容必须明显错开）：\n"+"\n".join(recent))
+            blocks.append("最近几天的安排（时间结构可以不同，具体内容也不要重复）：\n"+"\n".join(recent))
         return "\n".join(blocks)
 
     async def ensure_day(self, now: datetime, personality: str, weather_text: str, force: bool=False,
@@ -383,15 +387,16 @@ class ScheduleService:
                 f"人格：{personality or '自然、独立、有自己的生活'}\n"
                 f"{self._identity_note(personality)}\n"
                 f"{self._state_summary(state)}\n"
-                f"参考节奏（只参考时间结构和比例，禁止照抄里面的描述）："
+                f"参考节奏（只当风格参考，时间结构和比例都可以自由改动，禁止照抄里面的描述）："
                 f"{json.dumps(self._schedule_reference(day,weekend),ensure_ascii=False)}\n"
                 f"匿名生活记忆：{json.dumps(memory_context or {},ensure_ascii=False)}。日期提示不含用户身份，不得猜测是谁。"
                 f"{variety}\n"
                 "要求：\n"
                 "1) 每个节点的 summary 必须具体到'正在做什么'（例如'上午去教学楼听两门课''给连载小说写第三章''玩两把新出的游戏'），"
                 "禁止'处理自己的事情''放松、看东西和随便逛逛'这类空泛描述；\n"
-                "2) 工作/学习段必须与上面的人格身份一致（学生写上课/自习/社团方向，职场写通勤/工位事务方向，"
-                "自由创作者写约稿/创作方向），location 与身份匹配（学生多用学校、图书馆、食堂、宿舍，"
+                "2) 工作/学习段的方向要贴合上面的人格身份，别写成完全不符合身份的事"
+                "（学生写上课/自习，职场写通勤/工位事务，自由创作者写创作）；"
+                "location 与身份匹配（学生多用学校、图书馆、食堂、宿舍，"
                 "职场多用公司、工位）；休闲段每天至少有一件事与最近几天不同；\n"
                 "3) 节假日、节气、农历和天气要自然反映在活动里；\n"
                 "4) 日程应符合普通人的时间、精力和生活常识，不安排突兀的高强度事项，时间不重叠，包含夜间睡眠和至少两顿饭；\n"
@@ -404,6 +409,10 @@ class ScheduleService:
                 + (f"{7 if self.config.schedule.detailed_schedule else 6}) 晚上必须包含一个写日记的节点："
                    "kind 用 rest 或 leisure，summary 明确含「写日记」（例如'23:00 在书桌前写今天的日记'），"
                    "时长 20~40 分钟。\n")
+                # P53：允许松散日（编号顺延到日记节点之后，避免与上游 6/7 冲突）
+                + (f"{8 if self.config.schedule.detailed_schedule else 7}) 允许某些天过得很松：没有工作/学习段、"
+                   "睡懒觉、一整天都在休闲也正常，不要为了整齐而硬塞安排；但全天仍要符合生活常识"
+                   "（每天那个写日记的节点除外）。\n")
                 + "返回JSON数组。字段必须是start,end,kind,summary,location,energy_load,shareability。"
                 "kind只能是meal/work/study/travel/leisure/sleep/nap/rest。")
         nodes=[]

@@ -42,7 +42,8 @@ class LLMService:
                 self._supports_task_name = "task_name" in params
             except (TypeError, ValueError):
                 self._supports_task_name = False
-        call = {"prompt": messages, "temperature": temperature}
+        call = {"prompt": messages, "temperature": temperature,
+                "timeout_ms": 120_000}  # [P52] 宿主默认30s会掐死慢模型生成（详见补丁库README/INDEX）
         if max_tokens is not None:
             call["max_tokens"] = max_tokens
         if self._supports_task_name:
@@ -168,6 +169,7 @@ class LLMService:
             if rpc_timeout>0 and task_kind in {"schedule","scene_detail"}:
                 # Issue #20：日程/场景细化的单次推理可能超过宿主默认 30s RPC 上限，
                 # 按调用放宽（只影响这两类任务，其余调用维持宿主默认）。
+                call_kwargs.pop("timeout_ms",None)  # [P52共存] _generate_call 已带兜底 timeout_ms，这里让位避免重复传参
                 result=await self.ctx.call_capability("llm.generate",timeout_ms=rpc_timeout,**call_kwargs)
             else:
                 result=await self.ctx.llm.generate(**call_kwargs)

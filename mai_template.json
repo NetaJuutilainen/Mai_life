@@ -1,177 +1,28 @@
 {
   "workday": [
-    {
-      "start": "00:00",
-      "end": "08:00",
-      "kind": "sleep",
-      "summary": "夜间睡眠",
-      "location": "卧室",
-      "energy_load": 8,
-      "shareability": 0.05
-    },
-    {
-      "start": "08:00",
-      "end": "09:00",
-      "kind": "meal",
-      "summary": "洗漱并吃早餐",
-      "location": "家里",
-      "energy_load": -1,
-      "shareability": 0.25
-    },
-    {
-      "start": "09:00",
-      "end": "12:00",
-      "kind": "work",
-      "summary": "处理积压的私信和待办清单",
-      "location": "书桌前",
-      "energy_load": -4,
-      "shareability": 0.25
-    },
-    {
-      "start": "12:00",
-      "end": "13:00",
-      "kind": "meal",
-      "summary": "准备午饭",
-      "location": "厨房",
-      "energy_load": -1,
-      "shareability": 0.45
-    },
-    {
-      "start": "13:00",
-      "end": "13:40",
-      "kind": "nap",
-      "summary": "短暂午休",
-      "location": "卧室",
-      "energy_load": 3,
-      "shareability": 0.05
-    },
-    {
-      "start": "13:40",
-      "end": "18:00",
-      "kind": "study",
-      "summary": "整理这周的读书笔记和课程作业",
-      "location": "书桌前",
-      "energy_load": -5,
-      "shareability": 0.25
-    },
-    {
-      "start": "18:00",
-      "end": "19:00",
-      "kind": "meal",
-      "summary": "准备晚饭",
-      "location": "厨房",
-      "energy_load": -1,
-      "shareability": 0.55
-    },
-    {
-      "start": "19:00",
-      "end": "22:30",
-      "kind": "leisure",
-      "summary": "拼完上次没拼完的拼图",
-      "location": "家里",
-      "energy_load": -3,
-      "shareability": 0.55
-    },
-    {
-      "start": "23:00",
-      "end": "24:00",
-      "kind": "sleep",
-      "summary": "准备入睡",
-      "location": "卧室",
-      "energy_load": 1,
-      "shareability": 0.05
-    },
-    {
-      "start": "22:30",
-      "end": "23:00",
-      "kind": "rest",
-      "summary": "在书桌前写今天的日记",
-      "location": "书桌前",
-      "energy_load": 0,
-      "shareability": 0.1
-    }
+    {"start": "00:00", "end": "07:30", "kind": "sleep", "summary": "安稳睡觉", "location": "卧室", "energy_load": 8, "shareability": 0.05},
+    {"start": "07:30", "end": "08:00", "kind": "rest", "summary": "洗漱收拾，慢慢醒过来", "location": "家里", "energy_load": 1, "shareability": 0.1},
+    {"start": "08:00", "end": "08:30", "kind": "meal", "summary": "吃早餐", "location": "家里", "energy_load": -1, "shareability": 0.2},
+    {"start": "08:30", "end": "12:00", "kind": "work", "summary": "专注把上午最要紧的正事做完", "location": "书桌前", "energy_load": -4, "shareability": 0.2},
+    {"start": "12:00", "end": "13:00", "kind": "meal", "summary": "做午饭并好好吃完", "location": "家里", "energy_load": -1, "shareability": 0.35},
+    {"start": "13:00", "end": "13:40", "kind": "nap", "summary": "午休小憩", "location": "卧室", "energy_load": 3, "shareability": 0.05},
+    {"start": "13:40", "end": "18:00", "kind": "study", "summary": "看书学习，整理自己的笔记和资料", "location": "书桌前", "energy_load": -4, "shareability": 0.2},
+    {"start": "18:00", "end": "19:00", "kind": "meal", "summary": "做晚饭", "location": "家里", "energy_load": -1, "shareability": 0.5},
+    {"start": "19:00", "end": "22:00", "kind": "leisure", "summary": "自由安排晚上的娱乐时间", "location": "家里", "energy_load": -2, "shareability": 0.5},
+    {"start": "22:00", "end": "23:30", "kind": "leisure", "summary": "睡前放松，刷点轻松的内容", "location": "卧室", "energy_load": -1, "shareability": 0.3},
+    {"start": "23:30", "end": "24:00", "kind": "sleep", "summary": "洗漱上床，准备睡觉", "location": "卧室", "energy_load": 1, "shareability": 0.05}
   ],
   "weekend": [
-    {
-      "start": "00:00",
-      "end": "09:30",
-      "kind": "sleep",
-      "summary": "周末睡得久一点",
-      "location": "卧室",
-      "energy_load": 7,
-      "shareability": 0.05
-    },
-    {
-      "start": "09:30",
-      "end": "10:30",
-      "kind": "meal",
-      "summary": "慢慢起床吃早午餐",
-      "location": "家里",
-      "energy_load": -1,
-      "shareability": 0.4
-    },
-    {
-      "start": "10:30",
-      "end": "13:00",
-      "kind": "leisure",
-      "summary": "整理书架并给绿植换水",
-      "location": "家里",
-      "energy_load": -2,
-      "shareability": 0.5
-    },
-    {
-      "start": "13:00",
-      "end": "14:00",
-      "kind": "meal",
-      "summary": "准备午饭",
-      "location": "厨房",
-      "energy_load": -1,
-      "shareability": 0.5
-    },
-    {
-      "start": "14:00",
-      "end": "18:00",
-      "kind": "travel",
-      "summary": "去附近书店逛逛",
-      "location": "街道附近",
-      "energy_load": -5,
-      "shareability": 0.65
-    },
-    {
-      "start": "18:00",
-      "end": "19:00",
-      "kind": "meal",
-      "summary": "吃晚饭",
-      "location": "家里",
-      "energy_load": -1,
-      "shareability": 0.45
-    },
-    {
-      "start": "19:00",
-      "end": "22:30",
-      "kind": "leisure",
-      "summary": "追一集连载动画并写观后感",
-      "location": "家里",
-      "energy_load": -4,
-      "shareability": 0.6
-    },
-    {
-      "start": "23:00",
-      "end": "24:00",
-      "kind": "sleep",
-      "summary": "准备睡觉",
-      "location": "卧室",
-      "energy_load": 1,
-      "shareability": 0.05
-    },
-    {
-      "start": "22:30",
-      "end": "23:00",
-      "kind": "rest",
-      "summary": "在书桌前写今天的日记",
-      "location": "书桌前",
-      "energy_load": 0,
-      "shareability": 0.1
-    }
+    {"start": "00:00", "end": "08:30", "kind": "sleep", "summary": "睡个懒觉", "location": "卧室", "energy_load": 8, "shareability": 0.05},
+    {"start": "08:30", "end": "09:30", "kind": "rest", "summary": "赖会儿床再洗漱，状态慢慢回笼", "location": "家里", "energy_load": 1, "shareability": 0.15},
+    {"start": "09:30", "end": "10:30", "kind": "meal", "summary": "慢悠悠地做顿早午饭", "location": "家里", "energy_load": -1, "shareability": 0.3},
+    {"start": "10:30", "end": "12:00", "kind": "leisure", "summary": "收拾房间，打理一下自己的小天地", "location": "家里", "energy_load": -2, "shareability": 0.25},
+    {"start": "12:00", "end": "13:00", "kind": "meal", "summary": "吃午饭", "location": "家里", "energy_load": -1, "shareability": 0.35},
+    {"start": "13:00", "end": "14:00", "kind": "nap", "summary": "周末也要午休一下", "location": "卧室", "energy_load": 3, "shareability": 0.05},
+    {"start": "14:00", "end": "17:30", "kind": "travel", "summary": "出门走走，逛逛街或者去公园转转", "location": "外面", "energy_load": -3, "shareability": 0.6},
+    {"start": "17:30", "end": "19:00", "kind": "meal", "summary": "在外面吃点好的或者回家做晚饭", "location": "外面", "energy_load": -1, "shareability": 0.5},
+    {"start": "19:00", "end": "22:30", "kind": "leisure", "summary": "晚上的自由时间，玩点自己喜欢的", "location": "家里", "energy_load": -2, "shareability": 0.5},
+    {"start": "22:30", "end": "23:30", "kind": "leisure", "summary": "洗漱放松，为明天收尾", "location": "卧室", "energy_load": -1, "shareability": 0.2},
+    {"start": "23:30", "end": "24:00", "kind": "sleep", "summary": "上床睡觉", "location": "卧室", "energy_load": 1, "shareability": 0.05}
   ]
 }
