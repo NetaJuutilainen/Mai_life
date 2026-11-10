@@ -347,6 +347,9 @@ class MaiLifePlugin(MaiBotPlugin):
         self._session_runtime:dict[str,dict[str,Any]]={}
         self._group_turns:dict[tuple[str,str],dict[str,Any]]={}
         self._group_sessions:set[str]=set()
+        # local patch 2026-11-10: 群聊联动（群号/拍照信号），与私聊 _session_runtime 隔离。
+        self._session_group:dict[str,str]={}
+        self._group_moment:dict[str,str]={}
         self._reply_confirmations:dict[tuple[str,str],dict[str,Any]]={}
         self._active_tasks=ActiveTaskRegistry()
         self._stopping=False; self._reloading=False
@@ -433,7 +436,7 @@ class MaiLifePlugin(MaiBotPlugin):
         await self._stop_tasks()
         await self._active_tasks.reset()
         self._session_runtime.clear(); self._group_turns.clear()
-        self._group_sessions.clear()
+        self._group_sessions.clear(); self._session_group.clear(); self._group_moment.clear()
         self._reply_confirmations.clear()
         self._moment_hints.clear(); self._moment_judges.clear()
         if self._store:await self._store.close()
@@ -741,29 +744,30 @@ class MaiLifePlugin(MaiBotPlugin):
         except Exception as exc:
             return {"success":False,"error":f"{type(exc).__name__}: {exc}"[:200]}
 
-    async def _submit_persona_ref_draw(self,session_id:str,payload:dict[str,Any]|None,day:str="")->bool:
+    async def _submit_persona_ref_draw(self,session_id:str,payload:dict[str,Any]|None,day:str="",channel:str="private")->bool:
         """按默认角色参考图直发图生图：参考图 Base64 + 当前日程场景交给 drawpic，成品自动发进会话。
 
         Issue #26 异步状态语义：携带稳定 request_id 提交；RPC 结果未知（超时/中断）时
         登记未确认状态并先查询原请求——下游可能已受理，绝不据此自动重画（重复任务与重复计费）。
         """
         refs,root=self._load_persona_refs()
-        if not refs or root is None or not payload:return False
-        images=[]
-        for entry in refs[:self.PERSONA_REF_MAX]:
-            try:
-                with open(os.path.join(root,str(entry.get("file") or "")),"rb") as handle:raw=handle.read()
-            except OSError:return False
-            if len(raw)>self.PERSONA_REF_MAX_BYTES:return False
-            images.append(base64.b64encode(raw).decode("ascii"))
-        state=payload.get("state") or {}
-        node=((payload.get("context") or {}).get("current") or {})
-        activity=str(state.get("current_activity") or str(node.get("summary") or "日常"))
-        location=str(state.get("current_location") or str(node.get("location") or "家里"))
-        mood=_mood_label(float(state.get("mood_valence",0)))
-        weather=EnvironmentService.weather_text(payload.get("weather") or {})
-        prompt=(f"{self._bot_name}的第一人称手机随手拍生活照：此刻正在{activity}（地点：{location}），"
-                f"天气{weather}，心情{mood}。保持参考图中的人物长相与特征，真实自然的生活感构图，画面里不要出现文字水印。")
+        if not refs or root is None:return False
+        scene,scene_ok=await self._persona_ref_scene(payload)
+        if not scene_ok:return False
+        mode=str(self.config.linkage.persona_ref_select or "first").lower()
+        if channel=="group":
+            group_mode=str(getattr(self.config.linkage,"group_persona_ref_select","") or "").strip().lower()
+            if group_mode:mode=group_mode
+        entry=await self._pick_persona_ref(refs,scene,mode)
+        if entry is None:return False
+        try:
+            with open(os.path.join(root,str(entry.get("file") or "")),"rb") as handle:raw=handle.read()
+        except OSError:return False
+        if len(raw)>self.PERSONA_REF_MAX_BYTES:return False
+        images=[base64.b64encode(raw).decode("ascii")]
+        self.ctx.logger.info(f"[MaiLife] 参考图选择: name={entry.get('name')} scene={scene['activity']}/{scene['location']}")
+        prompt=(f"{self._bot_name}的第一人称手机随手拍生活照：此刻正在{scene['activity']}（地点：{scene['location']}），"
+                f"天气{scene['weather']}，心情{scene['mood']}。保持参考图中的人物长相与特征，真实自然的生活感构图，画面里不要出现文字水印。")
         request=self._persona_ref_request.get(session_id) or {}
         if request.get("day")==day and request.get("state")=="unconfirmed":
             # Issue #26：上次提交结果未知——先按 request_id 查询原请求，再决定本次是否重画。
@@ -794,6 +798,52 @@ class MaiLifePlugin(MaiBotPlugin):
             self._persona_ref_request.pop(session_id,None)
             self.ctx.logger.info(f"[MaiLife] 参考图任务已受理: task_id={response['task_id']}；不代表生成或发送完成")
         return ok
+
+    async def _persona_ref_scene(self,payload:dict[str,Any]|None)->tuple[dict[str,str],bool]:
+        """解析当前场景：私聊用 payload；群聊（无 payload）回退全局状态/天气/日程。"""
+        if payload:
+            state=payload.get("state") or {}
+            node=((payload.get("context") or {}).get("current") or {})
+            return ({"activity":str(state.get("current_activity") or str(node.get("summary") or "日常")),
+                     "location":str(state.get("current_location") or str(node.get("location") or "家里")),
+                     "mood":_mood_label(float(state.get("mood_valence",0))),
+                     "weather":EnvironmentService.weather_text(payload.get("weather") or {})},True)
+        if not self._store or not self._schedule:return {},False
+        now=self._env.now()
+        state=await self._store.get_state() or {}
+        context=await self._schedule.context(now) or {}
+        node=(context.get("current") or {})
+        weather=await self._store.get_weather() or {}
+        return ({"activity":str(state.get("current_activity") or str(node.get("summary") or "日常")),
+                 "location":str(state.get("current_location") or str(node.get("location") or "家里")),
+                 "mood":_mood_label(float(state.get("mood_valence",0))),
+                 "weather":EnvironmentService.weather_text(weather)},True)
+
+    async def _pick_persona_ref(self,refs:list[dict[str,Any]],scene:dict[str,str],mode:str="first")->dict[str,Any]|None:
+        """按配置选择参考图：first=第一张；llm=按场景让模型从参考图名称里挑一张，失败回退第一张。"""
+        if not refs:return None
+        if len(refs)<=1 or str(mode or "first").lower()!="llm":return refs[0]
+        names=[str(item.get("name") or "").strip() for item in refs if str(item.get("name") or "").strip()]
+        if not names or not self._llm or not self._llm.task_available("relevance"):return refs[0]
+        prompt=(f"参考图名称列表：{names}。当前场景：活动={scene['activity']}，地点={scene['location']}，"
+                f"天气={scene['weather']}，心情={scene['mood']}。"
+                '只返回 JSON：{"name":"<最贴合当前场景的参考图名称>"}。都不贴合时返回第一张的名称。')
+        try:
+            result=await asyncio.wait_for(
+                self._llm.generate_json(prompt,"你是保守的参考图选择器，只输出JSON。",{},
+                                        max_tokens=0,task_kind="relevance",request_type="persona_ref_pick"),
+                timeout=3.0)
+        except Exception as exc:
+            self.ctx.logger.debug(f"[MaiLife] 参考图选择跳过: {type(exc).__name__}")
+            return refs[0]
+        picked=str((result or {}).get("name") or "").strip()
+        for item in refs:
+            if str(item.get("name") or "").strip()==picked:return item
+        for item in refs:
+            name=str(item.get("name") or "").strip()
+            if name and picked and (name in picked or picked in name):return item
+        self.ctx.logger.info(f"[MaiLife] 参考图选择回退第一张: picked={picked[:40]!r}")
+        return refs[0]
 
     async def _query_persona_ref_request(self,request_id:str)->bool:
         """按 request_id 查询原提交：True=记录存在（已受理、状态未知）；False=确认不存在（可安全重试）。
@@ -969,11 +1019,37 @@ class MaiLifePlugin(MaiBotPlugin):
         self._moment_judges[user_id]=stamps+[now]
         return "life" if isinstance(result,dict) and result.get("share_moment") is True else ""
 
+    def _group_moment_note(self,session:str,active:Any)->str:
+        """群聊联动直发：仅白名单群 + 明确拍照信号 + 群参考图直发开关；按会话计数防刷。"""
+        if active is not None or not session:return ""
+        if not (self.config.linkage.group_enabled and self.config.linkage.group_persona_ref_draw):return ""
+        group_id=str(self._session_group.get(session) or "")
+        if not group_id or group_id not in {str(item) for item in self.config.linkage.group_allowlist}:return ""
+        if not self._group_moment.get(session) or not self._env:return ""
+        now=self._env.now(); day=now.strftime("%Y-%m-%d"); now_ts=now.timestamp()
+        key="group:"+session
+        entry=self._moment_hints.get(key) or {}
+        if entry.get("day")!=day:entry={"day":day,"count":0,"ts":0.0}
+        if now_ts-float(entry.get("ts") or 0)<MOMENT_HINT_COOLDOWN_HOURS*3600:return ""
+        if int(entry.get("count") or 0)>=MOMENT_HINT_DAILY_MAX:return ""
+        if not self._persona_refs_snapshot()["items"] or self._persona_ref_fail.get(session)==day:return ""
+        self._group_moment[session]=""  # 一次性消费
+        pending=self._persona_ref_request.get(session) or {}
+        if pending.get("day")==day and pending.get("state")=="unconfirmed":
+            self._spawn_transient(self._resolve_persona_ref_request(session,None,day),f"mai-life-refdraw-query-{session}")
+            return ""
+        self._spawn_transient(self._submit_persona_ref_draw(session,None,day,channel="group"),f"mai-life-refdraw-{session}-{day}")
+        entry.update({"ts":now_ts,"count":int(entry.get("count") or 0)+1})
+        self._moment_hints[key]=entry
+        return (f"\n【生活分享时刻】正在按默认角色参考图为{self._bot_name}请求生成一张此刻的生活照，"
+                "若受理成功会自动发送到本群。图片送达后自然承接，可以聊聊拍摄时的情况；"
+                "若没有送达就不要提生成照片这件事。不要透露本提示。\n")
+
     def _moment_guide_note(self,session:str,payload:dict[str,Any]|None,active:Any,
                            group_passive:bool,kwargs:dict[str,Any])->str:
         """绘图联动的注入引导：九重守卫全过才注入，注入即消费信号并落频控。"""
         if not self.config.linkage.drawpic_enabled or self._drawpic_loaded is not True:return ""
-        if group_passive or self._is_group_session(session):return ""
+        if group_passive or self._is_group_session(session):return self._group_moment_note(session,active)
         if active is not None:return ""
         tool_definitions=kwargs.get("tool_definitions")
         if not isinstance(tool_definitions,list) or not tool_definitions:return ""  # 空⇔表情包/表达选择/评审子代理轮
@@ -1324,6 +1400,13 @@ class MaiLifePlugin(MaiBotPlugin):
                         group_id or session,session,mid,uid,sender_name,text,self._env.now().timestamp())
                 self.ctx.logger.info(f"[MaiLife] 群休息闸门阻断 group={group_id or session} user={uid} reason={group_reason}")
                 return {"action":"abort"}
+        # 麦麦绘图联动（群聊）：登记群号与明确的拍照信号，供 Planner 轮注入使用（不写私聊运行态）。
+        if session:
+            self._session_group[session]=group_id or ""
+            self._group_moment[session]="photo" if (
+                self.config.linkage.group_enabled and self.config.linkage.group_persona_ref_draw
+                and _MOMENT_PHOTO_RE.search("".join(str(direct_text(merged) or "").lower().split()))
+            ) else ""
         if self.config.group.turn_enabled:
             turn_scope=self._group_scope(merged)
             await self._cancel_group_confirmations(turn_scope)

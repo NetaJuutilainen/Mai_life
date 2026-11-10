@@ -1136,6 +1136,52 @@ class LinkageSettings(PluginConfigBase):
             hint_en="With persona reference images uploaded, submit img2img directly using current schedule/scene. Off by default; falls back to text guidance on failure.",
         ),
     )
+    # local patch 2026-11-10: 群聊联动白名单 + 按场景选参考图（上游建议项）。
+    group_enabled: bool = Field(
+        default=False,
+        description="群聊绘图联动：允许在指定群聊中触发生活分享（含参考图直发）。默认关闭。",
+        json_schema_extra=_ui(
+            "群聊绘图联动", "默认关闭。开启后仅在「群聊白名单」内的群生效；群聊只按「拍照/自拍」等明确信号触发参考图直发，不做生活分享判定。",
+            2, label_en="Group Linkage",
+            hint_en="Off by default. Only allowlisted groups; group chats trigger on explicit photo/selfie signals only.",
+        ),
+    )
+    group_allowlist: list[str] = Field(
+        default_factory=list,
+        description="允许群聊联动生效的 QQ 群号；为空时群聊一律不触发。",
+        json_schema_extra=_ui(
+            "群聊白名单", "填写允许触发的 QQ 群号（只填真实群号）。留空=群聊不触发。",
+            3, label_en="Group Allowlist",
+            hint_en="QQ group IDs allowed to trigger linkage. Empty = no group triggers.",
+        ),
+    )
+    group_persona_ref_draw: bool = Field(
+        default=False,
+        description="群聊参考图直发：在群聊中按参考图直发生成生活照（会真实计费）。默认关闭。",
+        json_schema_extra=_ui(
+            "群聊参考图直发", "默认关闭。开启且群在白名单内时，群成员说「自拍/拍照」会按参考图直接生成并发进群（同一会话 2 小时冷却、每日 3 次上限）。",
+            4, label_en="Group Persona Reference img2img",
+            hint_en="Off by default. In allowlisted groups, photo/selfie requests submit persona-ref img2img directly (2h cooldown, 3/day cap).",
+        ),
+    )
+    persona_ref_select: str = Field(
+        default="first",
+        description="参考图选择方式：first=固定第一张；llm=按当前场景从参考图名称中挑选（失败回退第一张）。",
+        json_schema_extra=_ui(
+            "参考图选择", "first：固定使用第一张参考图（默认）；llm：按当前场景让模型从参考图名称中选择最贴合的一张，失败回退第一张。",
+            5, label_en="Reference Selection",
+            hint_en="first = always the first reference; llm = pick the best-matching reference by name for the current scene (falls back to first).",
+        ),
+    )
+    group_persona_ref_select: str = Field(
+        default="",
+        description="群聊参考图选择：留空=继承「参考图选择」；first/llm 单独覆盖群聊。",
+        json_schema_extra=_ui(
+            "群聊参考图选择", "留空继承上面的「参考图选择」；填 first 或 llm 可让群聊与私聊各自独立。",
+            6, label_en="Group Reference Selection",
+            hint_en="Empty inherits the main Reference Selection; first/llm overrides for group chats only.",
+        ),
+    )
 
 
 class MaiLifeSettings(PluginConfigBase):
