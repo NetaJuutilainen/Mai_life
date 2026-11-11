@@ -350,6 +350,8 @@ class MaiLifePlugin(MaiBotPlugin):
         # local patch 2026-11-10: 群聊联动（群号/拍照信号），与私聊 _session_runtime 隔离。
         self._session_group:dict[str,str]={}
         self._group_moment:dict[str,str]={}
+        # local patch 2026-11-11: 上一次选中的参考图，用于避免 LLM 总锚定第一张。
+        self._persona_ref_last:dict[str,str]={}
         self._reply_confirmations:dict[tuple[str,str],dict[str,Any]]={}
         self._active_tasks=ActiveTaskRegistry()
         self._stopping=False; self._reloading=False
@@ -437,6 +439,7 @@ class MaiLifePlugin(MaiBotPlugin):
         await self._active_tasks.reset()
         self._session_runtime.clear(); self._group_turns.clear()
         self._group_sessions.clear(); self._session_group.clear(); self._group_moment.clear()
+        self._persona_ref_last.clear()
         self._reply_confirmations.clear()
         self._moment_hints.clear(); self._moment_judges.clear()
         if self._store:await self._store.close()
@@ -820,30 +823,66 @@ class MaiLifePlugin(MaiBotPlugin):
                  "weather":EnvironmentService.weather_text(weather)},True)
 
     async def _pick_persona_ref(self,refs:list[dict[str,Any]],scene:dict[str,str],mode:str="first")->dict[str,Any]|None:
-        """按配置选择参考图：first=第一张；llm=按场景让模型从参考图名称里挑一张，失败回退第一张。"""
+        """按配置选择参考图：first=第一张；llm=按场景选一张（确定性规则优先，LLM 兜底，失败回退第一张）。"""
         if not refs:return None
         if len(refs)<=1 or str(mode or "first").lower()!="llm":return refs[0]
+        scene_text=" ".join(str(scene.get(k) or "") for k in ("activity","location","mood","weather"))
+        # 确定性规则优先：常见场景直接命中，避免小模型总锚定第一张。
+        rule=self._persona_ref_rule(refs,scene_text)
+        if rule is not None:
+            self.ctx.logger.info(f"[MaiLife] 参考图选择: name={rule.get('name')} reason=rule")
+            return rule
         names=[str(item.get("name") or "").strip() for item in refs if str(item.get("name") or "").strip()]
         if not names or not self._llm or not self._llm.task_available("relevance"):return refs[0]
-        prompt=(f"参考图名称列表：{names}。当前场景：活动={scene['activity']}，地点={scene['location']}，"
-                f"天气={scene['weather']}，心情={scene['mood']}。"
-                '只返回 JSON：{"name":"<最贴合当前场景的参考图名称>"}。都不贴合时返回第一张的名称。')
+        last=str(self._persona_ref_last.get("last") or "")
+        listing="\n".join("- "+n for n in names)
+        prompt=(f"你是{self._bot_name}的造型选择器。以下参考图是同一角色的不同穿搭/状态：\n{listing}\n"
+                f"当前场景：活动={scene['activity']}；地点={scene['location']}；天气={scene['weather']}；心情={scene['mood']}。"
+                + (f"上一张生活照用的是「{last}」。" if last else "")
+                + "请按名称所暗示的穿搭/状态选择与场景最贴合的一个："
+                "含「居家」的适合在家/沙发/床/休息；含「三股辫/日常/正面」的适合外出/见人/正式一点；"
+                "含「可爱」的适合卖萌/撒娇/亲密互动。"
+                "不要默认选第一张；如果多个都合适，优先选与上一张不同的。"
+                '只返回 JSON：{"name":"<列表中的名称原文>","reason":"不超过15字"}')
         try:
             result=await asyncio.wait_for(
                 self._llm.generate_json(prompt,"你是保守的参考图选择器，只输出JSON。",{},
                                         max_tokens=0,task_kind="relevance",request_type="persona_ref_pick"),
-                timeout=3.0)
+                timeout=6.0)
         except Exception as exc:
             self.ctx.logger.debug(f"[MaiLife] 参考图选择跳过: {type(exc).__name__}")
             return refs[0]
         picked=str((result or {}).get("name") or "").strip()
+        reason=str((result or {}).get("reason") or "")[:30]
         for item in refs:
-            if str(item.get("name") or "").strip()==picked:return item
+            if str(item.get("name") or "").strip()==picked:
+                self._persona_ref_last["last"]=picked
+                self.ctx.logger.info(f"[MaiLife] 参考图选择: name={picked} reason=llm({reason})")
+                return item
         for item in refs:
             name=str(item.get("name") or "").strip()
-            if name and picked and (name in picked or picked in name):return item
-        self.ctx.logger.info(f"[MaiLife] 参考图选择回退第一张: picked={picked[:40]!r}")
+            if name and picked and (name in picked or picked in name):
+                self._persona_ref_last["last"]=name
+                self.ctx.logger.info(f"[MaiLife] 参考图选择: name={name} reason=llm~({reason})")
+                return item
+        self.ctx.logger.info(f"[MaiLife] 参考图选择回退第一张: picked={picked[:40]!r} reason={reason}")
         return refs[0]
+
+    def _persona_ref_rule(self,refs:list[dict[str,Any]],text:str)->dict[str,Any]|None:
+        """常见场景的关键词规则：命中即返回对应参考图，不调 LLM。"""
+        low=text.replace(" ","").lower()
+        rules=(
+            (("床","被窝","睡觉","卧室","沙发","毯子","窝着","枕头","家里","客厅","书桌","电脑","写"),("居家",)),
+            (("出门","逛街","外面","路上","上班","咖啡","地铁","街"),("三股辫","日常","正面")),
+            (("撒娇","卖萌","可爱","抱抱","蹭"),("可爱",)),
+        )
+        for keywords, name_hints in rules:
+            if not any(k in low for k in keywords):continue
+            for item in refs:
+                name=str(item.get("name") or "")
+                if any(h in name for h in name_hints):
+                    return item
+        return None
 
     async def _query_persona_ref_request(self,request_id:str)->bool:
         """按 request_id 查询原提交：True=记录存在（已受理、状态未知）；False=确认不存在（可安全重试）。
