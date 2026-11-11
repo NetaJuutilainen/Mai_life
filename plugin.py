@@ -763,6 +763,7 @@ class MaiLifePlugin(MaiBotPlugin):
             if group_mode:mode=group_mode
         entry=await self._pick_persona_ref(refs,scene,mode)
         if entry is None:return False
+        self._save_persona_refs(root,refs)  # 持久化 last_used（规则 LRU 轮换依据；旧条目无该字段按 0 兼容）
         try:
             with open(os.path.join(root,str(entry.get("file") or "")),"rb") as handle:raw=handle.read()
         except OSError:return False
@@ -827,11 +828,13 @@ class MaiLifePlugin(MaiBotPlugin):
         if not refs:return None
         if len(refs)<=1 or str(mode or "first").lower()!="llm":return refs[0]
         scene_text=" ".join(str(scene.get(k) or "") for k in ("activity","location","mood","weather"))
-        # 确定性规则优先：常见场景直接命中，避免小模型总锚定第一张。
-        rule=self._persona_ref_rule(refs,scene_text)
-        if rule is not None:
-            self.ctx.logger.info(f"[MaiLife] 参考图选择: name={rule.get('name')} reason=rule")
-            return rule
+        # 确定性规则优先：常见场景直接命中，避免小模型总锚定第一张；多候选按 last_used 最久未用轮换。
+        candidates=self._persona_ref_candidates(refs,scene_text)
+        if candidates:
+            pick=min(candidates,key=lambda item:float(item.get("last_used") or 0))
+            pick["last_used"]=self._env.now().timestamp()
+            self.ctx.logger.info(f"[MaiLife] 参考图选择: name={pick.get('name')} reason=rule(lru)")
+            return pick
         names=[str(item.get("name") or "").strip() for item in refs if str(item.get("name") or "").strip()]
         if not names or not self._llm or not self._llm.task_available("relevance"):return refs[0]
         last=str(self._persona_ref_last.get("last") or "")
@@ -851,7 +854,7 @@ class MaiLifePlugin(MaiBotPlugin):
                 timeout=6.0)
         except Exception as exc:
             self.ctx.logger.debug(f"[MaiLife] 参考图选择跳过: {type(exc).__name__}")
-            return refs[0]
+            return candidates[0] if candidates else refs[0]
         picked=str((result or {}).get("name") or "").strip()
         reason=str((result or {}).get("reason") or "")[:30]
         for item in refs:
@@ -866,10 +869,10 @@ class MaiLifePlugin(MaiBotPlugin):
                 self.ctx.logger.info(f"[MaiLife] 参考图选择: name={name} reason=llm~({reason})")
                 return item
         self.ctx.logger.info(f"[MaiLife] 参考图选择回退第一张: picked={picked[:40]!r} reason={reason}")
-        return refs[0]
+        return candidates[0] if candidates else refs[0]
 
-    def _persona_ref_rule(self,refs:list[dict[str,Any]],text:str)->dict[str,Any]|None:
-        """常见场景的关键词规则：命中即返回对应参考图，不调 LLM。"""
+    def _persona_ref_candidates(self,refs:list[dict[str,Any]],text:str)->list[dict[str,Any]]:
+        """常见场景的关键词规则：返回所有名字命中该组关键词的候选（顺序保持 refs 原序），不调 LLM。"""
         low=text.replace(" ","").lower()
         rules=(
             (("床","被窝","睡觉","卧室","沙发","毯子","窝着","枕头","家里","客厅","书桌","电脑","写"),("居家",)),
@@ -878,11 +881,9 @@ class MaiLifePlugin(MaiBotPlugin):
         )
         for keywords, name_hints in rules:
             if not any(k in low for k in keywords):continue
-            for item in refs:
-                name=str(item.get("name") or "")
-                if any(h in name for h in name_hints):
-                    return item
-        return None
+            hits=[item for item in refs if any(h in str(item.get("name") or "") for h in name_hints)]
+            if hits:return hits
+        return []
 
     async def _query_persona_ref_request(self,request_id:str)->bool:
         """按 request_id 查询原提交：True=记录存在（已受理、状态未知）；False=确认不存在（可安全重试）。
