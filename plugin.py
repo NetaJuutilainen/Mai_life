@@ -774,8 +774,11 @@ class MaiLifePlugin(MaiBotPlugin):
         if len(raw)>self.PERSONA_REF_MAX_BYTES:return False
         images=[base64.b64encode(raw).decode("ascii")]
         self.ctx.logger.info(f"[MaiLife] 参考图选择: name={entry.get('name')} scene={scene['activity']}/{scene['location']}")
-        prompt=(f"{self._bot_name}的第一人称手机随手拍生活照：此刻正在{scene['activity']}（地点：{scene['location']}），"
-                f"天气{scene['weather']}，心情{scene['mood']}。保持参考图中的人物长相与特征，真实自然的生活感构图，画面里不要出现文字水印。")
+        activity_full=str(scene['activity'])
+        moment=(activity_full.split("。")[0] or activity_full)[:48] or "日常"
+        prompt=(f"{self._bot_name}的第一人称手机随手拍生活照：只画一个瞬间——{moment}（地点：{scene['location']}），"
+                f"天气{scene['weather']}，心情{scene['mood']}。保持参考图中的人物长相与特征，真实自然的生活感构图。"
+                "必须只输出一张完整的单幅照片：画面中不要出现分镜、格子、边框、连环画排版或多格拼接，也不要出现任何文字。")
         request=self._persona_ref_request.get(session_id) or {}
         if request.get("day")==day and request.get("state")=="unconfirmed":
             # Issue #26：上次提交结果未知——先按 request_id 查询原请求，再决定本次是否重画。
