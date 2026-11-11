@@ -1166,11 +1166,11 @@ class LinkageSettings(PluginConfigBase):
     )
     persona_ref_select: str = Field(
         default="first",
-        description="参考图选择方式：first=固定第一张；llm=按当前场景从参考图名称中挑选（失败回退第一张）。",
+        description="参考图选择方式：first=固定第一张；llm=按当前场景从参考图名称中挑最贴合的（短名单内最久未用优先）；random=随机一张。",
         json_schema_extra=_ui(
-            "参考图选择", "first：固定使用第一张参考图（默认）；llm：按当前场景让模型从参考图名称中选择最贴合的一张，失败回退第一张。",
+            "参考图选择", "first：固定第一张（默认）；llm：按场景选最贴合的（模型给短名单，短名单内最久未用优先，自然分布）；random：每张等概率随机。",
             5, label_en="Reference Selection",
-            hint_en="first = always the first reference; llm = pick the best-matching reference by name for the current scene (falls back to first).",
+            hint_en="first = always the first reference; llm = scene-matched with LRU rotation among the model's shortlist; random = uniform random.",
         ),
     )
     group_persona_ref_select: str = Field(

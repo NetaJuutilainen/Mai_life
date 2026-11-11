@@ -13,6 +13,7 @@ import hashlib
 import json
 import math
 import os
+import random
 import re
 import shutil
 import time
@@ -779,13 +780,17 @@ class MaiLifePlugin(MaiBotPlugin):
         prompt=(f"{self._bot_name}的第一人称手机随手拍生活照：只画一个瞬间——{moment}（地点：{scene['location']}），"
                 f"天气{scene['weather']}，心情{scene['mood']}。保持参考图中的人物长相与特征，真实自然的生活感构图。"
                 "必须只输出一张完整的单幅照片：画面中不要出现分镜、格子、边框、连环画排版或多格拼接，也不要出现任何文字。")
+        return await self._submit_draw_task(session_id,prompt,images,day)
+
+    async def _submit_draw_task(self,session_id:str,prompt:str,images:list[str],day:str)->bool:
+        """参考图任务公共提交口（自拍/漫画共用）。Issue #26 异步状态语义：携带稳定 request_id 提交；
+        RPC 结果未知（超时/中断）时登记未确认状态并先查询原请求——下游可能已受理，绝不据此自动重画。"""
         request=self._persona_ref_request.get(session_id) or {}
         if request.get("day")==day and request.get("state")=="unconfirmed":
-            # Issue #26：上次提交结果未知——先按 request_id 查询原请求，再决定本次是否重画。
             found=await self._query_persona_ref_request(request.get("request_id") or "")
             if found is True:
                 self.ctx.logger.info(f"[MaiLife] 参考图原请求已受理（未确认→确认），本轮不重画 session={session_id}")
-                return False  # 原任务仍在流程中：本轮回退文字引导，不创建第二个任务
+                return False  # 原任务仍在流程中：不创建第二个任务
             self._persona_ref_request.pop(session_id,None)  # 确认从未受理：允许重新提交
         request_id=f"refdraw-{uuid.uuid4().hex[:24]}"
         try:
@@ -832,9 +837,15 @@ class MaiLifePlugin(MaiBotPlugin):
                  "weather":EnvironmentService.weather_text(weather)},True)
 
     async def _pick_persona_ref(self,refs:list[dict[str,Any]],scene:dict[str,str],mode:str="first")->dict[str,Any]|None:
-        """按配置选择参考图：first=第一张；llm=按场景选一张（确定性规则优先，LLM 兜底，失败回退第一张）。"""
+        """按配置选择参考图：first=第一张；llm=按场景选（规则候选集优先，LLM 短名单+LRU 兜底）；random=随机一张。"""
         if not refs:return None
-        if len(refs)<=1 or str(mode or "first").lower()!="llm":return refs[0]
+        mode_l=str(mode or "first").lower()
+        if len(refs)<=1 or mode_l not in {"llm","random"}:return refs[0]
+        if mode_l=="random":
+            pick=random.choice(refs)
+            self._persona_ref_last["last"]=str(pick.get("name") or "")
+            self.ctx.logger.info(f"[MaiLife] 参考图选择: name={pick.get('name')} reason=random")
+            return pick
         scene_text=" ".join(str(scene.get(k) or "") for k in ("activity","location","mood","weather"))
         # 确定性规则优先：常见场景直接命中，避免小模型总锚定第一张；多候选按 last_used 最久未用轮换。
         candidates=self._persona_ref_candidates(refs,scene_text)
@@ -850,11 +861,11 @@ class MaiLifePlugin(MaiBotPlugin):
         prompt=(f"你是{self._bot_name}的造型选择器。以下参考图是同一角色的不同穿搭/状态：\n{listing}\n"
                 f"当前场景：活动={scene['activity']}；地点={scene['location']}；天气={scene['weather']}；心情={scene['mood']}。"
                 + (f"上一张生活照用的是「{last}」。" if last else "")
-                + "请按名称所暗示的穿搭/状态选择与场景最贴合的一个："
-                "含「居家」的适合在家/沙发/床/休息；含「三股辫/日常/正面」的适合外出/见人/正式一点；"
-                "含「可爱」的适合卖萌/撒娇/亲密互动。"
-                "不要默认选第一张；如果多个都合适，优先选与上一张不同的。"
-                '只返回 JSON：{"name":"<列表中的名称原文>","reason":"不超过15字"}')
+                + "请按名称所暗示的穿搭/状态，从列表中选出与场景最贴合的 3 个名称，按贴合度从高到低排列"
+                "（含「居家」的适合在家/沙发/床/休息；含「三股辫/日常/正面」的适合外出/见人/正式一点；"
+                "含「可爱」的适合卖萌/撒娇/亲密互动）。"
+                "不要默认选第一张；如果多个都合适，把最近没用过的排前面。"
+                '只返回 JSON：{"names":["<列表中的名称原文>",...]（最多 3 个，按贴合度从高到低）}')
         try:
             result=await asyncio.wait_for(
                 self._llm.generate_json(prompt,"你是保守的参考图选择器，只输出JSON。",{},
@@ -862,22 +873,23 @@ class MaiLifePlugin(MaiBotPlugin):
                 timeout=6.0)
         except Exception as exc:
             self.ctx.logger.debug(f"[MaiLife] 参考图选择跳过: {type(exc).__name__}")
-            return candidates[0] if candidates else refs[0]
-        picked=str((result or {}).get("name") or "").strip()
-        reason=str((result or {}).get("reason") or "")[:30]
-        for item in refs:
-            if str(item.get("name") or "").strip()==picked:
-                self._persona_ref_last["last"]=picked
-                self.ctx.logger.info(f"[MaiLife] 参考图选择: name={picked} reason=llm({reason})")
-                return item
-        for item in refs:
-            name=str(item.get("name") or "").strip()
-            if name and picked and (name in picked or picked in name):
-                self._persona_ref_last["last"]=name
-                self.ctx.logger.info(f"[MaiLife] 参考图选择: name={name} reason=llm~({reason})")
-                return item
-        self.ctx.logger.info(f"[MaiLife] 参考图选择回退第一张: picked={picked[:40]!r} reason={reason}")
-        return candidates[0] if candidates else refs[0]
+            return refs[0]
+        ranked=[str(n).strip() for n in ((result or {}).get("names") or []) if str(n).strip()]
+        def _match_ref(name:str)->dict[str,Any]|None:
+            for item in refs:
+                if str(item.get("name") or "").strip()==name:return item
+            for item in refs:
+                nm=str(item.get("name") or "").strip()
+                if nm and name and (nm in name or name in nm):return item
+            return None
+        shortlist=[item for item in (_match_ref(n) for n in ranked) if item]
+        if not shortlist:
+            self.ctx.logger.info(f"[MaiLife] 参考图选择回退第一张: ranked={ranked}")
+            return refs[0]
+        pick=min(shortlist,key=lambda item:float(item.get("last_used") or 0))  # 短名单内 LRU → 8 张自然分布
+        self._persona_ref_last["last"]=str(pick.get("name") or "")
+        self.ctx.logger.info(f"[MaiLife] 参考图选择: name={pick.get('name')} reason=llm-shortlist(lru) ranked={[str(i.get('name')) for i in shortlist]}")
+        return pick
 
     def _persona_ref_candidates(self,refs:list[dict[str,Any]],text:str)->list[dict[str,Any]]:
         """常见场景的关键词规则：返回所有名字命中该组关键词的候选（顺序保持 refs 原序），不调 LLM。"""
@@ -2284,6 +2296,42 @@ class MaiLifePlugin(MaiBotPlugin):
             return await self._send_command(kwargs,"上一次自拍还在确认中，稍后再试。")
         self._spawn_transient(self._submit_persona_ref_draw(session,None,day,channel="command"),f"mai-life-selfie-{session}")
         return await self._send_command(kwargs,"已开始生成自拍，完成后自动发送。")
+
+    @Command(name="/漫画",pattern=r"(?:/漫画|/comic)(?=\s|$)",description="把今天的生活画成一页漫画分镜（私聊）")
+    async def cmd_comic(self,**kwargs:Any)->tuple[bool,str,int]:
+        session=str(kwargs.get("stream_id") or "")
+        if not await self._command_access(kwargs):return await self._send_command(kwargs,PRIVATE_COMMAND_ACCESS_DENIED)
+        if not self._ready or not self._env or not self._schedule:
+            return await self._send_command(kwargs,"服务尚未初始化。")
+        if not (self.config.linkage.drawpic_enabled and self._drawpic_loaded is True):
+            return await self._send_command(kwargs,"麦麦绘图联动未启用。")
+        refs,root=self._load_persona_refs()
+        if not refs or root is None:return await self._send_command(kwargs,"还没有上传角色参考图（系统与配置页）。")
+        day=self._env.now().strftime("%Y-%m-%d")
+        request=self._persona_ref_request.get(session) or {}
+        if request.get("day")==day and request.get("state")=="unconfirmed":
+            return await self._send_command(kwargs,"上一次生成还在确认中，稍后再试。")
+        context=await self._schedule.context(self._env.now()) or {}
+        nodes=[str((n or {}).get("summary") or "").strip() for n in (context.get("nodes") or [])]
+        nodes=[n for n in nodes if n]
+        if not nodes:return await self._send_command(kwargs,"今天的日程还没生成，稍后再试。")
+        if len(nodes)>6:
+            step=len(nodes)/6.0
+            nodes=[nodes[int(i*step)] for i in range(6)]  # 均匀取样，覆盖早上到深夜
+        picked=min(refs,key=lambda item:float(item.get("last_used") or 0))  # 全池 LRU
+        picked["last_used"]=self._env.now().timestamp()
+        self._save_persona_refs(root,refs)
+        try:
+            with open(os.path.join(root,str(picked.get("file") or "")),"rb") as handle:raw=handle.read()
+        except OSError:return False
+        if len(raw)>self.PERSONA_REF_MAX_BYTES:return False
+        images=[base64.b64encode(raw).decode("ascii")]
+        prompt=(f"{self._bot_name}的一页自拍漫画分镜：把今天的生活按时间顺序画成 {len(nodes)} 格漫画，每格对应一个片段："
+                + "；".join(f"第{i+1}格：{n}" for i,n in enumerate(nodes))
+                + f"。参考图就是{self._bot_name}本人，保持人物长相与特征。"
+                "Q版漫画风格，格与格之间用白色分隔线，只输出这一页漫画，画面里不要出现任何文字。")
+        self._spawn_transient(self._submit_draw_task(session,prompt,images,day),f"mai-life-comic-{session}")
+        return await self._send_command(kwargs,"已开始生成今日漫画分镜，完成后自动发送。")
 
     @Command(name="/麦麦添加日期",pattern=r"(?:/麦麦添加日期|/mai_date_add)\s+(?P<event_date>\d{4}-\d{2}-\d{2})\s+(?P<event_name>.+)$",description="添加当前用户的重要日期")
     async def cmd_date_add(self,**kwargs:Any)->tuple[bool,str,int]:
