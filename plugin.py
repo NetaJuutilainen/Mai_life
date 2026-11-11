@@ -681,7 +681,7 @@ class MaiLifePlugin(MaiBotPlugin):
 
     # ===== 默认角色参考图（v1.26.0）：WebUI 上传 → 拍照场景按参考图直发图生图 =====
 
-    PERSONA_REF_MAX=3
+    PERSONA_REF_MAX=8
     PERSONA_REF_MAX_BYTES=6*1024*1024  # 解码后 ≤6MiB：Base64 编码 ≤8MiB，落在 drawpic 单张限额内
 
     def _persona_refs_dir(self)->str|None:
@@ -1060,22 +1060,37 @@ class MaiLifePlugin(MaiBotPlugin):
 
     def _group_moment_note(self,session:str,active:Any)->str:
         """群聊联动直发：仅白名单群 + 明确拍照信号 + 群参考图直发开关；按会话计数防刷。"""
-        if active is not None or not session:return ""
-        if not (self.config.linkage.group_enabled and self.config.linkage.group_persona_ref_draw):return ""
+        if active is not None or not session:
+            self.ctx.logger.debug(f"[MaiLife] 联动跳过: session={session} reason=no_active")
+            return ""
+        if not (self.config.linkage.group_enabled and self.config.linkage.group_persona_ref_draw):
+            self.ctx.logger.debug(f"[MaiLife] 联动跳过: session={session} reason=no_switch")
+            return ""
         group_id=str(self._session_group.get(session) or "")
-        if not group_id or group_id not in {str(item) for item in self.config.linkage.group_allowlist}:return ""
-        if not self._group_moment.get(session) or not self._env:return ""
+        if not group_id or group_id not in {str(item) for item in self.config.linkage.group_allowlist}:
+            self.ctx.logger.debug(f"[MaiLife] 联动跳过: session={session} reason=no_group_allow")
+            return ""
+        if not self._group_moment.get(session) or not self._env:
+            self.ctx.logger.debug(f"[MaiLife] 联动跳过: session={session} reason=no_signal")
+            return ""
         now=self._env.now(); day=now.strftime("%Y-%m-%d"); now_ts=now.timestamp()
         key="group:"+session
         entry=self._moment_hints.get(key) or {}
         if entry.get("day")!=day:entry={"day":day,"count":0,"ts":0.0}
-        if now_ts-float(entry.get("ts") or 0)<MOMENT_HINT_COOLDOWN_HOURS*3600:return ""
-        if int(entry.get("count") or 0)>=MOMENT_HINT_DAILY_MAX:return ""
-        if not self._persona_refs_snapshot()["items"] or self._persona_ref_fail.get(session)==day:return ""
+        if now_ts-float(entry.get("ts") or 0)<MOMENT_HINT_COOLDOWN_HOURS*3600:
+            self.ctx.logger.debug(f"[MaiLife] 联动跳过: session={session} reason=cooldown")
+            return ""
+        if int(entry.get("count") or 0)>=MOMENT_HINT_DAILY_MAX:
+            self.ctx.logger.debug(f"[MaiLife] 联动跳过: session={session} reason=daily_max")
+            return ""
+        if not self._persona_refs_snapshot()["items"] or self._persona_ref_fail.get(session)==day:
+            self.ctx.logger.debug(f"[MaiLife] 联动跳过: session={session} reason=no_refs")
+            return ""
         self._group_moment[session]=""  # 一次性消费
         pending=self._persona_ref_request.get(session) or {}
         if pending.get("day")==day and pending.get("state")=="unconfirmed":
             self._spawn_transient(self._resolve_persona_ref_request(session,None,day),f"mai-life-refdraw-query-{session}")
+            self.ctx.logger.debug(f"[MaiLife] 联动跳过: session={session} reason=pending")
             return ""
         self._spawn_transient(self._submit_persona_ref_draw(session,None,day,channel="group"),f"mai-life-refdraw-{session}-{day}")
         entry.update({"ts":now_ts,"count":int(entry.get("count") or 0)+1})
@@ -1087,34 +1102,57 @@ class MaiLifePlugin(MaiBotPlugin):
     def _moment_guide_note(self,session:str,payload:dict[str,Any]|None,active:Any,
                            group_passive:bool,kwargs:dict[str,Any])->str:
         """绘图联动的注入引导：九重守卫全过才注入，注入即消费信号并落频控。"""
-        if not self.config.linkage.drawpic_enabled or self._drawpic_loaded is not True:return ""
+        if not self.config.linkage.drawpic_enabled or self._drawpic_loaded is not True:
+            self.ctx.logger.debug(f"[MaiLife] 联动跳过: session={session} reason=no_switch")
+            return ""
         if group_passive or self._is_group_session(session):return self._group_moment_note(session,active)
-        if active is not None:return ""
+        if active is not None:
+            self.ctx.logger.debug(f"[MaiLife] 联动跳过: session={session} reason=no_active")
+            return ""
         tool_definitions=kwargs.get("tool_definitions")
-        if not isinstance(tool_definitions,list) or not tool_definitions:return ""  # 空⇔表情包/表达选择/评审子代理轮
+        if not isinstance(tool_definitions,list) or not tool_definitions:  # 空⇔表情包/表达选择/评审子代理轮
+            self.ctx.logger.debug(f"[MaiLife] 联动跳过: session={session} reason=no_tool")
+            return ""
         # draw 工具本轮不可见则不引导：_drawpic_loaded 是内存态、维护 tick 复检默认 10 分钟一次
         # （config.py:493-494），插件中途卸载后的陈旧窗口里工具并不在 tool_definitions 中。
         # 名字提取兼容 OpenAI function 结构与平铺 name（宿主 resolve_tool_definition_name 同样两种都吃）。
-        if DRAWPIC_DRAW_TOOL not in _tool_definition_names(tool_definitions):return ""
-        if not payload:return ""  # context.enabled=False 或群被动轮不构建 payload（on_planner 构建分支），联动静默不触发
-        if str(payload.get("bedtime") or "")=="approaching":return ""  # 睡前氛围期不与道晚安收尾冲突
+        if DRAWPIC_DRAW_TOOL not in _tool_definition_names(tool_definitions):
+            self.ctx.logger.debug(f"[MaiLife] 联动跳过: session={session} reason=no_tool")
+            return ""
+        if not payload:  # context.enabled=False 或群被动轮不构建 payload（on_planner 构建分支），联动静默不触发
+            self.ctx.logger.debug(f"[MaiLife] 联动跳过: session={session} reason=no_payload")
+            return ""
+        if str(payload.get("bedtime") or "")=="approaching":  # 睡前氛围期不与道晚安收尾冲突
+            self.ctx.logger.debug(f"[MaiLife] 联动跳过: session={session} reason=bedtime")
+            return ""
         runtime=self._session_runtime.get(session) or {}
-        if runtime.get("persona_ref_draw"):return ""
+        if runtime.get("persona_ref_draw"):
+            self.ctx.logger.debug(f"[MaiLife] 联动跳过: session={session} reason=persona_claim")
+            return ""
         signal=str(runtime.get("moment_signal") or "")
         user_id=str((payload.get("user") or {}).get("user_id") or runtime.get("user_id") or "")
-        if not user_id or not self._env:return ""
+        if not user_id or not self._env:
+            self.ctx.logger.debug(f"[MaiLife] 联动跳过: session={session} reason=no_signal")
+            return ""
         segment_kind=str(((payload.get("context") or {}).get("current") or {}).get("kind") or "")
-        if segment_kind in {"sleep","nap"}:return ""
+        if segment_kind in {"sleep","nap"}:
+            self.ctx.logger.debug(f"[MaiLife] 联动跳过: session={session} reason=segment")
+            return ""
         entry=self._moment_hints.get(user_id) or {}
         now=self._env.now(); day=now.strftime("%Y-%m-%d"); now_ts=now.timestamp()
         if entry.get("day")!=day:entry={"day":day,"count":0,"ts":0.0}
         elapsed=now_ts-float(entry.get("ts") or 0)
         conversation=signal in {"photo","life"}
         if conversation:
-            if elapsed<MOMENT_HINT_COOLDOWN_HOURS*3600:return ""
+            if elapsed<MOMENT_HINT_COOLDOWN_HOURS*3600:
+                self.ctx.logger.debug(f"[MaiLife] 联动跳过: session={session} reason=cooldown")
+                return ""
         elif elapsed<MOMENT_STATE_COOLDOWN_HOURS*3600:
+            self.ctx.logger.debug(f"[MaiLife] 联动跳过: session={session} reason=cooldown")
             return ""  # 无对话信号时只走低频状态触发通道
-        if int(entry.get("count") or 0)>=MOMENT_HINT_DAILY_MAX:return ""
+        if int(entry.get("count") or 0)>=MOMENT_HINT_DAILY_MAX:
+            self.ctx.logger.debug(f"[MaiLife] 联动跳过: session={session} reason=daily_max")
+            return ""
         state=payload.get("state") or {}; mood=_mood_label(float(state.get("mood_valence",0)))
         activity=str(state.get("current_activity") or "日常")
         weather=EnvironmentService.weather_text(payload.get("weather") or {})
@@ -1134,6 +1172,7 @@ class MaiLifePlugin(MaiBotPlugin):
                     self._spawn_transient(
                         self._resolve_persona_ref_request(session,payload,day),
                         f"mai-life-refdraw-query-{session}")
+                    self.ctx.logger.debug(f"[MaiLife] 联动跳过: session={session} reason=pending")
                     return ""
                 # 同步认领本条消息：后台任务尚未开始时，Planner 也不能另起一张图。
                 runtime["persona_ref_draw"]="submitting"
