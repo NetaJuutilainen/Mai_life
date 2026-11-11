@@ -811,12 +811,13 @@ class MaiLifePlugin(MaiBotPlugin):
         return ok
 
     async def _persona_ref_scene(self,payload:dict[str,Any]|None)->tuple[dict[str,str],bool]:
-        """解析当前场景：私聊用 payload；群聊（无 payload）回退全局状态/天气/日程。"""
+        """解析当前场景：以**当前日程节点**为准（真正的「当下」），state.current_activity 会停在最后一次场景切换可能过期。
+        私聊用 payload；群聊（无 payload）回退全局日程/状态/天气。"""
         if payload:
             state=payload.get("state") or {}
             node=((payload.get("context") or {}).get("current") or {})
-            return ({"activity":str(state.get("current_activity") or str(node.get("summary") or "日常")),
-                     "location":str(state.get("current_location") or str(node.get("location") or "家里")),
+            return ({"activity":str(node.get("summary") or state.get("current_activity") or "日常"),
+                     "location":str(node.get("location") or state.get("current_location") or "家里"),
                      "mood":_mood_label(float(state.get("mood_valence",0))),
                      "weather":EnvironmentService.weather_text(payload.get("weather") or {})},True)
         if not self._store or not self._schedule:return {},False
@@ -825,8 +826,8 @@ class MaiLifePlugin(MaiBotPlugin):
         context=await self._schedule.context(now) or {}
         node=(context.get("current") or {})
         weather=await self._store.get_weather() or {}
-        return ({"activity":str(state.get("current_activity") or str(node.get("summary") or "日常")),
-                 "location":str(state.get("current_location") or str(node.get("location") or "家里")),
+        return ({"activity":str(node.get("summary") or state.get("current_activity") or "日常"),
+                 "location":str(node.get("location") or state.get("current_location") or "家里"),
                  "mood":_mood_label(float(state.get("mood_valence",0))),
                  "weather":EnvironmentService.weather_text(weather)},True)
 
