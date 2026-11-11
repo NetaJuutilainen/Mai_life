@@ -2255,6 +2255,22 @@ class MaiLifePlugin(MaiBotPlugin):
         if not await self._command_access(kwargs):return await self._send_command(kwargs,PRIVATE_COMMAND_ACCESS_DENIED)
         return await self._send_command(kwargs,await self._status_report())
 
+    @Command(name="/自拍",pattern=r"(?:/自拍|/selfie)(?=\s|$)",description="立即生成一张带角色参考图的自拍（私聊）")
+    async def cmd_selfie(self,**kwargs:Any)->tuple[bool,str,int]:
+        session=str(kwargs.get("stream_id") or "")
+        if not await self._command_access(kwargs):return await self._send_command(kwargs,PRIVATE_COMMAND_ACCESS_DENIED)
+        if not self._ready or not self._env:return await self._send_command(kwargs,"服务尚未初始化。")
+        if not (self.config.linkage.drawpic_enabled and self._drawpic_loaded is True):
+            return await self._send_command(kwargs,"麦麦绘图联动未启用。")
+        refs,root=self._load_persona_refs()
+        if not refs or root is None:return await self._send_command(kwargs,"还没有上传角色参考图（系统与配置页）。")
+        day=self._env.now().strftime("%Y-%m-%d")
+        request=self._persona_ref_request.get(session) or {}
+        if request.get("day")==day and request.get("state")=="unconfirmed":
+            return await self._send_command(kwargs,"上一次自拍还在确认中，稍后再试。")
+        self._spawn_transient(self._submit_persona_ref_draw(session,None,day,channel="command"),f"mai-life-selfie-{session}")
+        return await self._send_command(kwargs,"已开始生成自拍，完成后自动发送。")
+
     @Command(name="/麦麦添加日期",pattern=r"(?:/麦麦添加日期|/mai_date_add)\s+(?P<event_date>\d{4}-\d{2}-\d{2})\s+(?P<event_name>.+)$",description="添加当前用户的重要日期")
     async def cmd_date_add(self,**kwargs:Any)->tuple[bool,str,int]:
         uid=str(kwargs.get("user_id") or ""); groups=kwargs.get("matched_groups") if isinstance(kwargs.get("matched_groups"),dict) else {}
