@@ -784,9 +784,17 @@ class MaiLifePlugin(MaiBotPlugin):
         self.ctx.logger.info(f"[MaiLife] 参考图选择: name={entry.get('name')} scene={scene['activity']}/{scene['location']}")
         activity_full=str(scene['activity'])
         moment=(activity_full.split("。")[0] or activity_full)[:48] or "日常"
-        prompt=(f"{self._bot_name}的第一人称手机随手拍生活照：只画一个瞬间——{moment}（地点：{scene['location']}），"
-                f"天气{scene['weather']}，心情{scene['mood']}。保持参考图中的人物长相与特征，真实自然的生活感构图。"
-                "必须只输出一张完整的单幅照片：画面中不要出现分镜、格子、边框、连环画排版或多格拼接，也不要出现任何文字。")
+        safety=("保持参考图中的人物长相与特征，真实自然的生活感构图。画面保持日常得体、全年龄向，"
+                "不要任何暗示性或暴露元素。")
+        if scene.get("night"):
+            # 2026-11-13 夜间分支：氛围词替代天气；全年龄硬约束防审核秒拒（当日 OpenAI 审核事件复盘）。
+            prompt=(f"{self._bot_name}的第一人称手机随手拍生活照：只画一个瞬间——{moment}（地点：{scene['location']}），"
+                    f"心情{scene['mood']}。半睡半醒的困意、没整理的头发，床头小夜灯的暖光，昏暗里随手一拍的氛围。{safety}"
+                    "必须只输出一张完整的单幅照片：画面中不要出现分镜、格子、边框、连环画排版或多格拼接，也不要出现任何文字。")
+        else:
+            prompt=(f"{self._bot_name}的第一人称手机随手拍生活照：只画一个瞬间——{moment}（地点：{scene['location']}），"
+                    f"天气{scene['weather']}，心情{scene['mood']}。{safety}"
+                    "必须只输出一张完整的单幅照片：画面中不要出现分镜、格子、边框、连环画排版或多格拼接，也不要出现任何文字。")
         return await self._submit_draw_task(session_id,prompt,images,day)
 
     async def _submit_draw_task(self,session_id:str,prompt:str,images:list[str],day:str)->bool:
@@ -828,20 +836,27 @@ class MaiLifePlugin(MaiBotPlugin):
         if payload:
             state=payload.get("state") or {}
             node=((payload.get("context") or {}).get("current") or {})
-            return ({"activity":str(node.get("summary") or state.get("current_activity") or "日常"),
-                     "location":str(node.get("location") or state.get("current_location") or "家里"),
-                     "mood":_mood_label(float(state.get("mood_valence",0))),
-                     "weather":EnvironmentService.weather_text(payload.get("weather") or {})},True)
+            scene={"activity":str(node.get("summary") or state.get("current_activity") or "日常"),
+                   "location":str(node.get("location") or state.get("current_location") or "家里"),
+                   "mood":_mood_label(float(state.get("mood_valence",0))),
+                   "weather":EnvironmentService.weather_text(payload.get("weather") or {}),"night":""}
+            if str(node.get("kind") or "") in {"sleep","nap"}:
+                # 2026-11-13 夜间会话直发：睡觉节点不直译成「熟睡」场景（直发语境的叙事是被叫醒回消息）。
+                scene.update({"activity":"深夜被消息吵醒后开着夜灯回消息的间隙","night":"1"})
+            return (scene,True)
         if not self._store or not self._schedule:return {},False
         now=self._env.now()
         state=await self._store.get_state() or {}
         context=await self._schedule.context(now) or {}
         node=(context.get("current") or {})
         weather=await self._store.get_weather() or {}
-        return ({"activity":str(node.get("summary") or state.get("current_activity") or "日常"),
-                 "location":str(node.get("location") or state.get("current_location") or "家里"),
-                 "mood":_mood_label(float(state.get("mood_valence",0))),
-                 "weather":EnvironmentService.weather_text(weather)},True)
+        scene={"activity":str(node.get("summary") or state.get("current_activity") or "日常"),
+               "location":str(node.get("location") or state.get("current_location") or "家里"),
+               "mood":_mood_label(float(state.get("mood_valence",0))),
+               "weather":EnvironmentService.weather_text(weather),"night":""}
+        if str(node.get("kind") or "") in {"sleep","nap"}:
+            scene.update({"activity":"深夜被消息吵醒后开着夜灯回消息的间隙","night":"1"})
+        return (scene,True)
 
     async def _pick_persona_ref(self,refs:list[dict[str,Any]],scene:dict[str,str],mode:str="first")->dict[str,Any]|None:
         """按配置选择参考图：first=第一张；llm=场景规则命中后组内 LRU，未命中则 LLM 短名单内 LRU，均失败走全局 LRU；random=随机一张。"""
@@ -1180,8 +1195,16 @@ class MaiLifePlugin(MaiBotPlugin):
             return ""
         segment_kind=str(((payload.get("context") or {}).get("current") or {}).get("kind") or "")
         if segment_kind in {"sleep","nap"}:
-            self.ctx.logger.debug(f"[MaiLife] 联动跳过: session={session} reason=segment")
-            return ""
+            # 2026-11-13 夜间会话放行：休息闸门可唤醒 ⇒ 聊着天的「睡觉段」叙事是「被叫醒回消息」，
+            # 此时被要求拍照人设成立（夜灯/迷糊）。只拦无信号的主动通道（睡着没人叫，不该自发照片）
+            # 与直发不可用的情况；群聊联动走 _group_moment_note 不经过此处。
+            night_direct=(signal in {"photo","life"}
+                          and self.config.linkage.persona_ref_draw
+                          and bool(self._persona_refs_snapshot()["items"]))
+            if not night_direct:
+                self.ctx.logger.debug(f"[MaiLife] 联动跳过: session={session} reason=segment")
+                return ""
+            self.ctx.logger.info(f"[MaiLife] 夜间会话直发放行: session={session} signal={signal} segment={segment_kind}")
         entry=self._moment_hints.get(user_id) or {}
         now=self._env.now(); day=now.strftime("%Y-%m-%d"); now_ts=now.timestamp()
         if entry.get("day")!=day:entry={"day":day,"count":0,"ts":0.0}
@@ -1227,8 +1250,10 @@ class MaiLifePlugin(MaiBotPlugin):
                     self._moment_signal_sticky.pop(session,None)  # 一次性消费，防同一信号重复注入
                 entry.update({"ts":now_ts,"count":int(entry.get("count") or 0)+1})
                 self._moment_hints[user_id]=entry
+                night_tone=("深夜时段：用刚被吵醒、迷迷糊糊的口吻自然承接（开着夜灯回消息，不要提睡觉日程也不要拒绝）。"
+                            if segment_kind in {"sleep","nap"} else "")
                 return (f"\n【生活分享时刻】正在按默认角色参考图为{bot}请求生成一张此刻的生活照，"
-                        "若受理成功会自动发送到会话。图片送达后自然承接，可以聊聊拍摄时的情况；"
+                        f"若受理成功会自动发送到会话。{night_tone}图片送达后自然承接，可以聊聊拍摄时的情况；"
                         "不要为这条请求再搜索或调用绘图工具。若没有送达就不要提生成照片这件事。不要透露本提示。\n")
             # Issue #11 L1：对方发来照片想看"麦麦长这样"时，引导走 edit_image 图生图
             # （插件自动以对方真实图片为参考）；该工具本轮不可见则不提，避免引导不可调用的工具。
