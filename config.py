@@ -1182,6 +1182,21 @@ class LinkageSettings(PluginConfigBase):
             hint_en="Empty inherits the main Reference Selection; first/llm overrides for group chats only.",
         ),
     )
+    persona_ref_rules: list[str] = Field(
+        default_factory=lambda: [
+            "床|被窝|睡觉|卧室|沙发|毯子|窝|枕头|家里|客厅|书桌|电脑|写|做饭|煮|吃|洗漱|家务=居家|女仆",
+            "出门|逛街|外面|路上|通勤|街|咖啡|地铁|散步|走|超市|公园|商场=三股辫|外出|便服|冬装|正面",
+            "撒娇|卖萌|可爱|抱抱|蹭|亲亲=可爱",
+            "生日|节日|过年|圣诞|惊喜|纪念|特别|彩蛋=彩蛋",
+        ],
+        description="参考图选择规则，每行一条：场景关键词|关键词2=名字关键词|关键词2。命中场景后，从名字含该关键词的参考图中按最久未用（LRU）轮流选。",
+        json_schema_extra=_ui(
+            "参考图规则",
+            "每行一条，格式「场景词|场景词=名字词|名字词」。例：床|沙发|睡觉=居家|女仆 表示场景出现床/沙发/睡觉时，从名字含「居家」或「女仆」的参考图里轮换。清空则用内置默认规则。",
+            7, label_en="Reference Rules",
+            hint_en="One rule per line: scenario keywords|keywords=name keywords|keywords. Within a matched rule, refs rotate by least-recently-used. Empty = built-in defaults.",
+        ),
+    )
 
 
 class MaiLifeSettings(PluginConfigBase):

@@ -688,6 +688,13 @@ class MaiLifePlugin(MaiBotPlugin):
 
     PERSONA_REF_MAX=8
     PERSONA_REF_MAX_BYTES=6*1024*1024  # 解码后 ≤6MiB：Base64 编码 ≤8MiB，落在 drawpic 单张限额内
+    # 参考图选择规则（WebUI「参考图规则」清空时的内置默认）：场景词|场景词=名字词|名字词
+    DEFAULT_PERSONA_REF_RULES=(
+        "床|被窝|睡觉|卧室|沙发|毯子|窝|枕头|家里|客厅|书桌|电脑|写|做饭|煮|吃|洗漱|家务=居家|女仆",
+        "出门|逛街|外面|路上|通勤|街|咖啡|地铁|散步|走|超市|公园|商场=三股辫|外出|便服|冬装|正面",
+        "撒娇|卖萌|可爱|抱抱|蹭|亲亲=可爱",
+        "生日|节日|过年|圣诞|惊喜|纪念|特别|彩蛋=彩蛋",
+    )
 
     def _persona_refs_dir(self)->str|None:
         paths=getattr(self.ctx,"paths",None)
@@ -837,33 +844,38 @@ class MaiLifePlugin(MaiBotPlugin):
                  "weather":EnvironmentService.weather_text(weather)},True)
 
     async def _pick_persona_ref(self,refs:list[dict[str,Any]],scene:dict[str,str],mode:str="first")->dict[str,Any]|None:
-        """按配置选择参考图：first=第一张；llm=按场景选（规则候选集优先，LLM 短名单+LRU 兜底）；random=随机一张。"""
+        """按配置选择参考图：first=第一张；llm=场景规则命中后组内 LRU，未命中则 LLM 短名单内 LRU，均失败走全局 LRU；random=随机一张。"""
         if not refs:return None
         mode_l=str(mode or "first").lower()
         if len(refs)<=1 or mode_l not in {"llm","random"}:return refs[0]
+        now_ts=self._env.now().timestamp() if self._env else time.time()
+        def _take(item:dict[str,Any])->dict[str,Any]:
+            item["last_used"]=now_ts
+            self._persona_ref_last["last"]=str(item.get("name") or "")
+            return item
         if mode_l=="random":
-            pick=random.choice(refs)
-            self._persona_ref_last["last"]=str(pick.get("name") or "")
+            pick=_take(random.choice(refs))
             self.ctx.logger.info(f"[MaiLife] 参考图选择: name={pick.get('name')} reason=random")
             return pick
         scene_text=" ".join(str(scene.get(k) or "") for k in ("activity","location","mood","weather"))
-        # 确定性规则优先：常见场景直接命中，避免小模型总锚定第一张；多候选按 last_used 最久未用轮换。
+        # ① 场景规则命中 → 组内 LRU 轮换（保证同场景的多张平均出现）
         candidates=self._persona_ref_candidates(refs,scene_text)
         if candidates:
-            pick=min(candidates,key=lambda item:float(item.get("last_used") or 0))
-            pick["last_used"]=self._env.now().timestamp()
-            self.ctx.logger.info(f"[MaiLife] 参考图选择: name={pick.get('name')} reason=rule(lru)")
+            pick=_take(self._lru_ref(candidates))
+            self.ctx.logger.info(f"[MaiLife] 参考图选择: name={pick.get('name')} reason=rule(lru) group={len(candidates)}")
             return pick
+        # ② 场景无规则命中 → LLM 短名单 → 短名单内 LRU
         names=[str(item.get("name") or "").strip() for item in refs if str(item.get("name") or "").strip()]
-        if not names or not self._llm or not self._llm.task_available("relevance"):return refs[0]
+        if not names or not self._llm or not self._llm.task_available("relevance"):
+            pick=_take(self._lru_ref(refs))
+            self.ctx.logger.info(f"[MaiLife] 参考图选择: name={pick.get('name')} reason=lru(no-llm)")
+            return pick
         last=str(self._persona_ref_last.get("last") or "")
         listing="\n".join("- "+n for n in names)
         prompt=(f"你是{self._bot_name}的造型选择器。以下参考图是同一角色的不同穿搭/状态：\n{listing}\n"
                 f"当前场景：活动={scene['activity']}；地点={scene['location']}；天气={scene['weather']}；心情={scene['mood']}。"
                 + (f"上一张生活照用的是「{last}」。" if last else "")
-                + "请按名称所暗示的穿搭/状态，从列表中选出与场景最贴合的 3 个名称，按贴合度从高到低排列"
-                "（含「居家」的适合在家/沙发/床/休息；含「三股辫/日常/正面」的适合外出/见人/正式一点；"
-                "含「可爱」的适合卖萌/撒娇/亲密互动）。"
+                + "请按名称所暗示的穿搭/状态，从列表中选出与场景最贴合的 3 个名称，按贴合度从高到低排列。"
                 "不要默认选第一张；如果多个都合适，把最近没用过的排前面。"
                 '只返回 JSON：{"names":["<列表中的名称原文>",...]（最多 3 个，按贴合度从高到低）}')
         try:
@@ -872,8 +884,9 @@ class MaiLifePlugin(MaiBotPlugin):
                                         max_tokens=0,task_kind="relevance",request_type="persona_ref_pick"),
                 timeout=6.0)
         except Exception as exc:
-            self.ctx.logger.debug(f"[MaiLife] 参考图选择跳过: {type(exc).__name__}")
-            return refs[0]
+            pick=_take(self._lru_ref(refs))
+            self.ctx.logger.info(f"[MaiLife] 参考图选择: name={pick.get('name')} reason=lru(llm-{type(exc).__name__})")
+            return pick
         ranked=[str(n).strip() for n in ((result or {}).get("names") or []) if str(n).strip()]
         def _match_ref(name:str)->dict[str,Any]|None:
             for item in refs:
@@ -884,26 +897,33 @@ class MaiLifePlugin(MaiBotPlugin):
             return None
         shortlist=[item for item in (_match_ref(n) for n in ranked) if item]
         if not shortlist:
-            self.ctx.logger.info(f"[MaiLife] 参考图选择回退第一张: ranked={ranked}")
-            return refs[0]
-        pick=min(shortlist,key=lambda item:float(item.get("last_used") or 0))  # 短名单内 LRU → 8 张自然分布
-        self._persona_ref_last["last"]=str(pick.get("name") or "")
+            pick=_take(self._lru_ref(refs))
+            self.ctx.logger.info(f"[MaiLife] 参考图选择: name={pick.get('name')} reason=lru(no-shortlist) ranked={ranked}")
+            return pick
+        pick=_take(self._lru_ref(shortlist))
         self.ctx.logger.info(f"[MaiLife] 参考图选择: name={pick.get('name')} reason=llm-shortlist(lru) ranked={[str(i.get('name')) for i in shortlist]}")
         return pick
 
     def _persona_ref_candidates(self,refs:list[dict[str,Any]],text:str)->list[dict[str,Any]]:
-        """常见场景的关键词规则：返回所有名字命中该组关键词的候选（顺序保持 refs 原序），不调 LLM。"""
+        """场景词→名字词规则（WebUI「参考图规则」可编辑）；返回所有命中该组的候选，不调 LLM。"""
         low=text.replace(" ","").lower()
-        rules=(
-            (("床","被窝","睡觉","卧室","沙发","毯子","窝着","枕头","家里","客厅","书桌","电脑","写"),("居家",)),
-            (("出门","逛街","外面","路上","上班","咖啡","地铁","街"),("三股辫","日常","正面")),
-            (("撒娇","卖萌","可爱","抱抱","蹭"),("可爱",)),
-        )
-        for keywords, name_hints in rules:
+        raw=list(getattr(self.config.linkage,"persona_ref_rules",None) or self.DEFAULT_PERSONA_REF_RULES)
+        for line in raw:
+            line=str(line or "").strip()
+            if not line or "=" not in line:continue
+            scene_part,name_part=line.split("=",1)
+            keywords=[k.strip() for k in scene_part.split("|") if k.strip()]
+            name_hints=[k.strip() for k in name_part.split("|") if k.strip()]
+            if not keywords or not name_hints:continue
             if not any(k in low for k in keywords):continue
             hits=[item for item in refs if any(h in str(item.get("name") or "") for h in name_hints)]
             if hits:return hits
         return []
+
+    @staticmethod
+    def _lru_ref(refs:list[dict[str,Any]])->dict[str,Any]|None:
+        """最久未用的参考图（last_used 缺失按 0，新图优先）。"""
+        return min(refs,key=lambda item:float(item.get("last_used") or 0)) if refs else None
 
     async def _query_persona_ref_request(self,request_id:str)->bool:
         """按 request_id 查询原提交：True=记录存在（已受理、状态未知）；False=确认不存在（可安全重试）。
