@@ -784,16 +784,16 @@ class MaiLifePlugin(MaiBotPlugin):
         self.ctx.logger.info(f"[MaiLife] 参考图选择: name={entry.get('name')} scene={scene['activity']}/{scene['location']}")
         activity_full=str(scene['activity'])
         moment=(activity_full.split("。")[0] or activity_full)[:48] or "日常"
-        safety=("保持参考图中的人物长相与特征，真实自然的生活感构图。画面保持日常得体、全年龄向，"
-                "不要任何暗示性或暴露元素。")
+        # 2026-11-13 用户拍板：不加全年龄硬约束（擦边可接受）；审核拒=失败不计费，由用户自担。
         if scene.get("night"):
-            # 2026-11-13 夜间分支：氛围词替代天气；全年龄硬约束防审核秒拒（当日 OpenAI 审核事件复盘）。
+            # 2026-11-13 夜间分支：氛围词替代天气。
             prompt=(f"{self._bot_name}的第一人称手机随手拍生活照：只画一个瞬间——{moment}（地点：{scene['location']}），"
-                    f"心情{scene['mood']}。半睡半醒的困意、没整理的头发，床头小夜灯的暖光，昏暗里随手一拍的氛围。{safety}"
+                    f"心情{scene['mood']}。半睡半醒的困意、没整理的头发，床头小夜灯的暖光，昏暗里随手一拍的氛围。"
+                    "保持参考图中的人物长相与特征，真实自然的生活感构图。"
                     "必须只输出一张完整的单幅照片：画面中不要出现分镜、格子、边框、连环画排版或多格拼接，也不要出现任何文字。")
         else:
             prompt=(f"{self._bot_name}的第一人称手机随手拍生活照：只画一个瞬间——{moment}（地点：{scene['location']}），"
-                    f"天气{scene['weather']}，心情{scene['mood']}。{safety}"
+                    f"天气{scene['weather']}，心情{scene['mood']}。保持参考图中的人物长相与特征，真实自然的生活感构图。"
                     "必须只输出一张完整的单幅照片：画面中不要出现分镜、格子、边框、连环画排版或多格拼接，也不要出现任何文字。")
         return await self._submit_draw_task(session_id,prompt,images,day)
 
