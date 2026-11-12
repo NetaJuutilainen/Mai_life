@@ -2297,7 +2297,7 @@ class MaiLifePlugin(MaiBotPlugin):
         self._spawn_transient(self._submit_persona_ref_draw(session,None,day,channel="command"),f"mai-life-selfie-{session}")
         return await self._send_command(kwargs,"已开始生成自拍，完成后自动发送。")
 
-    @Command(name="/漫画",pattern=r"(?:/漫画|/comic)(?=\s|$)",description="把今天的生活画成一页漫画分镜（私聊）")
+    @Command(name="/日程漫画",pattern=r"(?:/日程漫画|/麦麦漫画|/maimai_comic)(?=\s|$)",description="把今天的生活画成一页漫画分镜（私聊）")
     async def cmd_comic(self,**kwargs:Any)->tuple[bool,str,int]:
         session=str(kwargs.get("stream_id") or "")
         if not await self._command_access(kwargs):return await self._send_command(kwargs,PRIVATE_COMMAND_ACCESS_DENIED)
