@@ -127,10 +127,13 @@ def _switch(value:Any)->str:
 
 
 def _config_scalar_type(annotation:Any)->str:
-    """配置字段标量类型标签（bool/int/float/str，Literal 收敛为 str）；非标量返回空串即不可编辑。"""
+    """配置字段标量类型标签（bool/int/float/str/list，Literal 收敛为 str）；非标量返回空串即不可编辑。
+    list 仅限 list[str]（2026-11-17：多人设规则/hint 逐行编辑，按换行拆分回写）。"""
     if get_origin(annotation) is Literal:
         args=get_args(annotation)
         return "str" if all(isinstance(item,str) for item in args) else ""
+    if get_origin(annotation) is list and get_args(annotation)==(str,):
+        return "list"
     if annotation is bool:return "bool"
     if annotation is int:return "int"
     if annotation is float:return "float"
@@ -156,6 +159,9 @@ def _coerce_config_value(annotation:Any,raw:str)->tuple[bool,Any]:
         except ValueError:return False,f"需要数字，收到 {text!r}"
         if not math.isfinite(value):return False,"数字必须有限"
         return True,value
+    if kind=="list":
+        lines=[line.strip() for line in text.replace("\r\n","\n").split("\n")]
+        return True,[line for line in lines if line]
     choices=get_args(annotation) if get_origin(annotation) is Literal else ()
     if choices and text not in choices:
         return False,f"取值只能是 {'/'.join(str(item) for item in choices)}，收到 {text!r}"
@@ -3466,7 +3472,13 @@ class MaiLifePlugin(MaiBotPlugin):
                     "environment":{"timezone":str(cfg.environment.timezone),"city":str(cfg.environment.city),
                                    "weather_refresh_minutes":int(cfg.environment.weather_refresh_minutes)},
                     "linkage":{"drawpic_enabled":_switch(cfg.linkage.drawpic_enabled),
-                               "drawpic_detected":_switch(self._drawpic_loaded is True)},
+                               "drawpic_detected":_switch(self._drawpic_loaded is True),
+                               "persona_ref_select":str(cfg.linkage.persona_ref_select),
+                               "group_persona_ref_select":str(cfg.linkage.group_persona_ref_select or "") or "（继承）",
+                               "group_enabled":_switch(cfg.linkage.group_enabled),
+                               "group_allowlist":"、".join(str(item) for item in cfg.linkage.group_allowlist),
+                               "persona_ref_rules":"\n".join(str(item) for item in cfg.linkage.persona_ref_rules),
+                               "persona_ref_persona_rules":"\n".join(str(item) for item in cfg.linkage.persona_ref_persona_rules)},
                     "context":{"enabled":_switch(cfg.context.enabled),
                                "continuity_enabled":_switch(cfg.context.continuity_enabled),
                                "continuity_interval_minutes":int(cfg.context.continuity_interval_minutes),
@@ -3549,6 +3561,7 @@ class MaiLifePlugin(MaiBotPlugin):
                                 "template_file":str(cfg.schedule.template_file),
                                 "detailed_schedule":_switch(cfg.schedule.detailed_schedule),
                                 "persona_schedule_hint":str(cfg.schedule.persona_schedule_hint),
+                                "persona_schedule_hints":"\n".join(str(item) for item in cfg.schedule.persona_schedule_hints),
                                 "template_status":(self._schedule.template_status() if self._schedule else "missing")},
                     "proactive":{"enabled":_switch(cfg.proactive.enabled),
                                  "patrol_interval_minutes":int(cfg.proactive.patrol_interval_minutes),

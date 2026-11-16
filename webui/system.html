@@ -853,11 +853,12 @@
               const valStr = String(v ?? '—');
               const isOn = valStr === '开启' || valStr === '开';
               const isOff = valStr === '关闭' || valStr === '关';
+              const multi = valStr.includes('\n');
               const etype = (EDITABLE[secKey] || {})[k];
               return `
                 <div class="ml-cfg-kv">
                   <span class="ml-cfg-k" title="${esc(k)}">${esc(label)} <small style="opacity:0.65;">(${esc(k)})</small></span>
-                  <span class="ml-cfg-v" style="${isOn ? 'color:var(--status-good-ink);' : isOff ? 'color:var(--ml-muted);' : ''}">${esc(valStr)}</span>
+                  <span class="ml-cfg-v" style="${isOn ? 'color:var(--status-good-ink);' : isOff ? 'color:var(--ml-muted);' : ''}${multi ? 'white-space:pre-line;text-align:left;' : ''}">${esc(valStr)}</span>
                   ${etype ? `<button type="button" class="ml-cfg-edit" data-sec="${esc(secKey)}" data-key="${esc(k)}" data-type="${esc(etype)}" data-raw="${esc(valStr)}" title="修改 ${esc(secKey)}.${esc(k)}">✎</button>` : ''}
                 </div>
               `;
@@ -886,6 +887,10 @@
     } else if (type === 'int' || type === 'float') {
       const numeric = /^-?\d+(\.\d+)?$/.test(cur) ? cur : '';
       fieldHtml = `<input type="number"${type === 'int' ? ' step="1"' : ' step="any"'} class="ml-cfg-input" value="${esc(numeric)}" placeholder="${esc(cur)}">`;
+    } else if (type === 'list') {
+      // 多行列表（每行一条）：优先取汇总原文（含换行），回退按钮携带值。
+      const curList = String(((state.config || {})[sec] || {})[key] ?? cur ?? '');
+      fieldHtml = `<textarea class="ml-cfg-input" rows="6" style="width:100%;min-width:260px;font-family:var(--ml-font-mono);font-size:12px;line-height:1.5;" placeholder="每行一条；清空全部行=清空该配置">${esc(curList)}</textarea>`;
     } else {
       fieldHtml = `<input type="text" class="ml-cfg-input" value="${esc(cur)}">`;
     }
@@ -896,7 +901,8 @@
     vSpan.querySelector('.ml-cfg-act.ok').addEventListener('click', submitCfgEdit);
     vSpan.querySelector('.ml-cfg-act.cancel').addEventListener('click', cancelCfgEditor);
     input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') submitCfgEdit();
+      // textarea（list 型）里 Enter 是换行，不绑定提交；Esc 仍可取消。
+      if (e.key === 'Enter' && input.tagName !== 'TEXTAREA') submitCfgEdit();
       if (e.key === 'Escape') cancelCfgEditor();
     });
     input.focus();
