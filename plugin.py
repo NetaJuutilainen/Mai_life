@@ -2354,6 +2354,10 @@ class MaiLifePlugin(MaiBotPlugin):
         session=str(kwargs.get("stream_id") or "")
         if not await self._command_access(kwargs):return await self._send_command(kwargs,PRIVATE_COMMAND_ACCESS_DENIED)
         if not self._ready or not self._env:return await self._send_command(kwargs,"服务尚未初始化。")
+        if self.config.linkage.drawpic_enabled and self._drawpic_loaded is not True:
+            # 2026-11-17 命令时点复检：消除重载启动时序竞态（drawpic 常晚于本插件完成注册）
+            # 与维护 tick 间隔之间的窗口期，避免用过期内存态误报「联动未启用」。
+            await self._check_drawpic()
         if not (self.config.linkage.drawpic_enabled and self._drawpic_loaded is True):
             return await self._send_command(kwargs,"麦麦绘图联动未启用。")
         refs,root=self._load_persona_refs()
@@ -2371,6 +2375,10 @@ class MaiLifePlugin(MaiBotPlugin):
         if not await self._command_access(kwargs):return await self._send_command(kwargs,PRIVATE_COMMAND_ACCESS_DENIED)
         if not self._ready or not self._env or not self._schedule:
             return await self._send_command(kwargs,"服务尚未初始化。")
+        if self.config.linkage.drawpic_enabled and self._drawpic_loaded is not True:
+            # 2026-11-17 命令时点复检：消除重载启动时序竞态（drawpic 常晚于本插件完成注册）
+            # 与维护 tick 间隔之间的窗口期，避免用过期内存态误报「联动未启用」。
+            await self._check_drawpic()
         if not (self.config.linkage.drawpic_enabled and self._drawpic_loaded is True):
             return await self._send_command(kwargs,"麦麦绘图联动未启用。")
         refs,root=self._load_persona_refs()
@@ -2527,6 +2535,7 @@ class MaiLifePlugin(MaiBotPlugin):
     async def _status_report(self)->str:
         """聚合生活、消息、模型、联网与后台任务健康状态供诊断命令展示。"""
         if not self._ready:return "麦生活尚未初始化。"
+        if self.config.linkage.drawpic_enabled:await self._check_drawpic()  # 状态页展示前复检，避免过期内存态
         assert self._store and self._env and self._schedule and self._llm and self._information and self._creation
         state=await self._store.get_state(); weather=await self._store.get_weather() or {"description":"天气未知"}
         context=await self._schedule.context(self._env.now())
