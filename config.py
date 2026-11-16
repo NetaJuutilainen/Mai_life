@@ -1034,10 +1034,21 @@ class ScheduleSettings(PluginConfigBase):
     )
     persona_schedule_hint: str = Field(
         default="",
-        description="主人补充的作息说明：原样注入日程生成提示词且优先级最高（如「她是大三学生，周二周四有实验课，周末去画室兼职」）。留空则完全按人格设定推导。",
+        description="主人补充的作息说明：原样注入日程生成提示词且优先级最高（如「她是大三学生，周二周四有实验课，周末去画室兼职」）。留空则完全按人格设定推导。多人设请改用下方「多人设作息说明」。",
         json_schema_extra=_ui(
-            "人设备注作息", "自由文本，400 字以内；存在时优先级最高——日程优先服从这段说明，其次才是人格设定。留空则完全按人格设定推导作息。", 4,
-            label_en="Persona Schedule Hint", hint_en="Free-text schedule notes injected verbatim with top priority. Empty = derive from persona only.",
+            "人设备注作息（基线）", "自由文本，400 字以内；存在时优先级最高——日程优先服从这段说明，其次才是人格设定。留空则完全按人格设定推导作息。多人设场景建议把它留作兜底：各人设的说明写到下方「多人设作息说明」里按人设自动切换。",
+            4,
+            label_en="Persona Schedule Hint (baseline)", hint_en="Free-text schedule notes injected verbatim with top priority. Empty = derive from persona only. For multi-persona setups use the per-persona hints below.",
+        ),
+    )
+    persona_schedule_hints: list[str] = Field(
+        default_factory=list,
+        description="多人设备注作息，每行一条：人格关键词|关键词2=作息说明全文。按当前人设文本匹配（首个命中的行生效），命中后用该行说明替代上面的基线说明；全部未命中回落基线说明。用于多套人设各配一份作息说明，切换人设自动跟随。",
+        json_schema_extra=_ui(
+            "多人设作息说明（按人设切换）",
+            "每行一条，格式「人格关键词|关键词2=作息说明全文」。例：Gemini|猫娘=Gemini酱没有固定工作学业…… 表示人设文本含 Gemini 或 猫娘 时用这条说明（优先级最高）。全部未命中回落上面的「人设备注作息」基线；旧说明不必删除，挪成一行即可多人设共存。",
+            5, label_en="Per-Persona Schedule Hints",
+            hint_en="One rule per line: persona keywords|keywords=hint text. First match against the current persona wins; fallback is the baseline hint above.",
         ),
     )
 
@@ -1209,12 +1220,22 @@ class LinkageSettings(PluginConfigBase):
             "撒娇|卖萌|可爱|抱抱|蹭|亲亲=可爱",
             "生日|节日|过年|圣诞|惊喜|纪念|特别|彩蛋=彩蛋",
         ],
-        description="参考图选择规则，每行一条：场景关键词|关键词2=名字关键词|关键词2。命中场景后，从名字含该关键词的参考图中按最久未用（LRU）轮流选。",
+        description="参考图选择规则，每行一条：场景关键词|关键词2=名字关键词|关键词2。命中场景后，从名字含该关键词的参考图中按最久未用（LRU）轮流选。多人设分组请配合下方「参考图人设分组」使用。",
         json_schema_extra=_ui(
             "参考图规则",
-            "每行一条，格式「场景词|场景词=名字词|名字词」。例：床|沙发|睡觉=居家|女仆 表示场景出现床/沙发/睡觉时，从名字含「居家」或「女仆」的参考图里轮换。清空则用内置默认规则。",
+            "每行一条，格式「场景词|场景词=名字词|名字词」。例：床|沙发|睡觉=居家|女仆 表示场景出现床/沙发/睡觉时，从名字含「居家」或「女仆」的参考图里轮换。清空则用内置默认规则。多人设场景先在下方「参考图人设分组」限定当前人设可用图，再按场景在组内挑选。",
             7, label_en="Reference Rules",
             hint_en="One rule per line: scenario keywords|keywords=name keywords|keywords. Within a matched rule, refs rotate by least-recently-used. Empty = built-in defaults.",
+        ),
+    )
+    persona_ref_persona_rules: list[str] = Field(
+        default_factory=list,
+        description="参考图人设分组（跟随人设切换），每行一条：人格关键词|关键词2=标签。按当前人设文本匹配（首个命中的行生效），选图只在「人设标签=该标签」的参考图里进行，杜绝误用其他人设的图；全部未命中时只用无标签的通用图。留空=不分组，全部参考图可用（原行为）。",
+        json_schema_extra=_ui(
+            "参考图人设分组（跟随人设切换）",
+            "每行一条，格式「人格关键词|关键词2=标签」。例：Gemini|猫娘=gemini 表示人设文本含 Gemini 或 猫娘 时，选图只在人设标签为 gemini 的参考图里进行；各人设的图互不可见，不会误读。全部未命中时只用未打标签的通用图。留空=不启用分组（全部可用）。参考图的人设标签在「系统与配置」页上传时填写或对已有图点「改标签」。",
+            8, label_en="Persona Reference Groups",
+            hint_en="One rule per line: persona keywords|keywords=tag. Selection only draws from refs whose persona tag matches the current persona; unmatched = generic (untagged) refs only. Empty = no grouping (all refs available).",
         ),
     )
 

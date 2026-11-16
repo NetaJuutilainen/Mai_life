@@ -374,15 +374,31 @@ class ScheduleService:
 
         _IDENTITY_RULES/_apply_identity 仅保留给离线回落骨架定向；生成路径一律走本指引，
         反馈的用户痛点（关键词误判 student、homebody 固定三件套）由此根治。
+        2026-11-17 多人设 hint：persona_schedule_hints 每行「人格关键词|关键词2=说明全文」，
+        按当前人设文本首个命中的行替代基线说明；全未命中回落 persona_schedule_hint（旧说明不删）。
         """
         parts=["身份指引：日程的作息、活动与地点必须从上面的人格设定推导——"
                "设定写明的身份与日常（职业、学业、生活方式）要落在具体节点上；"
                "设定没有写明的方面按普通人的常识安排，但不得与设定矛盾；"
                "不要套用任何固定的身份模板词。"]
-        hint=" ".join(str(self.config.schedule.persona_schedule_hint or "").split())[:400]
+        hint=" ".join(self._resolve_schedule_hint(personality).split())[:400]
         if hint:
             parts.append(f"主人补充的作息说明（优先级最高，与之冲突的通用安排一律让位）：{hint}")
         return "\n".join(parts)
+
+    def _resolve_schedule_hint(self, personality: str) -> str:
+        """多人设 hint 解析（2026-11-17）：persona_schedule_hints 每行「人格关键词|关键词2=说明全文」，
+        按当前人设文本首个命中的行生效；全未命中回落 persona_schedule_hint（基线说明保持不变，不删除）。"""
+        text=str(personality or "").lower()
+        for line in list(getattr(self.config.schedule,"persona_schedule_hints",None) or []):
+            line=str(line or "").strip()
+            if not line or "=" not in line:continue
+            keys_part,value=line.split("=",1)
+            keywords=[k.strip().lower() for k in keys_part.split("|") if k.strip()]
+            value=value.strip()
+            if not keywords or not value:continue
+            if any(k in text for k in keywords):return value[:400]
+        return str(self.config.schedule.persona_schedule_hint or "")
 
     def _apply_identity(self, nodes: list[dict[str, Any]], personality: str) -> list[dict[str, Any]]:
         """回落模板按人格身份定向：只改 work/study 段的方向与地点，时间结构不动。"""

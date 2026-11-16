@@ -460,6 +460,10 @@
         <input type="text" id="ref-name" class="ml-cfg-input" style="min-width:180px;" placeholder="例如：正面定妆照" maxlength="60">
       </label>
       <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--ml-muted);">
+        人设标签（可选，多人设分组）
+        <input type="text" id="ref-persona" class="ml-cfg-input" style="min-width:150px;" placeholder="例如：gemini / deepseek" maxlength="40">
+      </label>
+      <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--ml-muted);">
         图片（JPEG/PNG/WebP，宿主自动按最长边 2048 缩图）
         <input type="file" id="ref-file" accept="image/jpeg,image/png,image/webp"
                style="font-size:12px;color:var(--ml-muted);">
@@ -467,7 +471,7 @@
       <button type="button" class="ml-btn ml-btn-primary" id="btn-ref-upload">上传参考图</button>
     </div>
     <div style="font-size:11.5px;color:var(--ml-muted);line-height:1.5;margin-bottom:8px;">
-      上传后（最多 3 张），拍照/生活照场景触发时自动以参考图 + 当前日程场景直发图生图；需开启「参考图直发」开关且已装配麦麦绘图，失败自动回退文字引导。
+      上传后（最多 15 张），拍照/生活照场景触发时自动以参考图 + 当前日程场景直发图生图；需开启「参考图直发」开关且已装配麦麦绘图，失败自动回退文字引导。多人设：给图片打「人设标签」，选图只在当前人设标签的图里进行（分组规则见配置页「参考图人设分组」）；未打标签的图在未命中分组时兜底。
     </div>
     <div id="refs-list"></div>
   </section>
@@ -688,9 +692,10 @@
       const list = document.getElementById('refs-list');
       list.innerHTML = refs.items.length ? refs.items.map((r) => `
         <div class="ml-cfg-kv">
-          <span class="ml-cfg-k">${esc(r.name)} <small style="opacity:0.65;">${esc(r.id)}</small></span>
+          <span class="ml-cfg-k">${esc(r.name)} <small style="opacity:0.65;">${esc(r.id)}</small>${r.persona ? ` <span class="ml-badge" style="font-size:10px;vertical-align:middle;">${esc(r.persona)}</span>` : '<span class="ml-badge ml-badge-warn" style="font-size:10px;vertical-align:middle;" title="未打标签：人设分组未命中时作为通用图兜底">通用</span>'}</span>
           <span style="display:flex;gap:8px;align-items:center;">
             <span class="ml-cfg-v" style="font-weight:400;">${(Number(r.bytes || 0) / 1024).toFixed(0)} KiB</span>
+            <button type="button" class="ml-cfg-edit" data-ref-tag="${esc(r.id)}" data-tag="${esc(r.persona || '')}">改标签</button>
             <button type="button" class="ml-cfg-edit" data-ref-del="${esc(r.id)}">删除</button>
           </span>
         </div>
@@ -998,10 +1003,12 @@
     btn.disabled = true; btn.textContent = '上传中…';
     try {
       const res = await window.maibot.upload('refs', file,
-        { name: document.getElementById('ref-name').value.trim() });
+        { name: document.getElementById('ref-name').value.trim(),
+          persona: document.getElementById('ref-persona').value.trim() });
       if (res && res.success === false) throw new Error(res.error || '上传失败');
       document.getElementById('error-banner').classList.remove('active');
       document.getElementById('ref-name').value = '';
+      document.getElementById('ref-persona').value = '';
       fileInput.value = '';
       btn.textContent = '已上传';
       await refreshAdmin();
@@ -1014,6 +1021,23 @@
   });
 
   document.getElementById('refs-list').addEventListener('click', async (e) => {
+    const tagBtn = e.target.closest('[data-ref-tag]');
+    if (tagBtn) {
+      const cur = tagBtn.dataset.tag || '';
+      const next = window.prompt('人设标签（留空=通用图；人设分组命中时只选对应标签的图）', cur);
+      if (next === null) return;
+      tagBtn.disabled = true;
+      try {
+        const res = await window.maibot.action('refs_set_persona', { ref_id: tagBtn.dataset.refTag, persona: next.trim() });
+        if (res && res.success === false) throw new Error(res.error || '设置失败');
+        await refreshAdmin();
+      } catch (err) {
+        tagBtn.disabled = false;
+        document.getElementById('error-text').textContent = `参考图标签设置失败：${err?.message || String(err)}`;
+        document.getElementById('error-banner').classList.add('active');
+      }
+      return;
+    }
     const del = e.target.closest('[data-ref-del]');
     if (!del) return;
     del.disabled = true;

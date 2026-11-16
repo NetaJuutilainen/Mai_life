@@ -687,7 +687,7 @@ class MaiLifePlugin(MaiBotPlugin):
 
     # ===== 默认角色参考图（v1.26.0）：WebUI 上传 → 拍照场景按参考图直发图生图 =====
 
-    PERSONA_REF_MAX=8
+    PERSONA_REF_MAX=15
     PERSONA_REF_MAX_BYTES=6*1024*1024  # 解码后 ≤6MiB：Base64 编码 ≤8MiB，落在 drawpic 单张限额内
     # 参考图选择规则（WebUI「参考图规则」清空时的内置默认）：场景词|场景词=名字词|名字词
     DEFAULT_PERSONA_REF_RULES=(
@@ -716,8 +716,34 @@ class MaiLifePlugin(MaiBotPlugin):
         with open(os.path.join(root,"refs.json"),"w",encoding="utf-8") as handle:
             json.dump(refs,handle,ensure_ascii=False,indent=1)
 
-    @API(name="webui_persona_refs_upload",description="WebUI 默认角色参考图上传：领取宿主暂存图并持久保存（最多 3 张）",version="1",public=False)
-    async def webui_persona_refs_upload(self,upload_id:str,name:str="",**kwargs:Any)->dict[str,Any]:
+    def _active_persona_tag(self)->str:
+        """按当前人设文本解析生效的人设标签：规则「人格关键词|关键词2=标签」首个命中即生效
+        （2026-11-17 多人设分组）。无规则或全未命中返回 ""=不分组（只用无标签的通用参考图，兼容旧行为）。"""
+        text=str(self._personality or "").lower()
+        for line in list(getattr(self.config.linkage,"persona_ref_persona_rules",None) or []):
+            line=str(line or "").strip()
+            if not line or "=" not in line:continue
+            keys_part,tag=line.split("=",1)
+            keywords=[k.strip().lower() for k in keys_part.split("|") if k.strip()]
+            tag=tag.strip()
+            if not keywords or not tag:continue
+            if any(k in text for k in keywords):return tag
+        return ""
+
+    def _persona_refs_scoped(self)->tuple[list[dict[str,Any]],str|None,str]:
+        """加载参考图并按当前人设标签过滤（2026-11-17 多人设分组）：
+        生效标签非空时只返回标签匹配的图，杜绝误用其他人设的参考图；全未命中=只返回无标签的通用图。
+        返回 (过滤后列表, 目录, 生效标签)；管理清单（webui snapshot）保持全量不受影响。"""
+        refs,root=self._load_persona_refs()
+        tag=self._active_persona_tag()
+        if not tag or root is None or not refs:return refs,root,tag
+        scoped=[item for item in refs if str(item.get("persona") or "").strip()==tag]
+        if len(scoped)!=len(refs):
+            self.ctx.logger.info(f"[MaiLife] 参考图人设分组: 标签={tag} 可用 {len(scoped)}/{len(refs)} 张（其余属于其他人设）")
+        return scoped,root,tag
+
+    @API(name="webui_persona_refs_upload",description="WebUI 默认角色参考图上传：领取宿主暂存图并持久保存（上限 15 张，可带人设标签分组）",version="1",public=False)
+    async def webui_persona_refs_upload(self,upload_id:str,name:str="",persona:str="",**kwargs:Any)->dict[str,Any]:
         try:
             if not self._ready:return {"success":False,"error":"not_ready"}
             refs,root=self._load_persona_refs()
@@ -737,7 +763,8 @@ class MaiLifePlugin(MaiBotPlugin):
             shutil.move(src,dst)
             entry={"id":ref_id,"name":" ".join(str(name or "").split())[:60] or f"参考图 {len(refs)+1}",
                    "file":os.path.basename(dst),"sha256":str(claimed.get("sha256") or ""),
-                   "bytes":len(raw),"added_at":time.time()}
+                   "bytes":len(raw),"added_at":time.time(),
+                   "persona":" ".join(str(persona or "").split())[:40]}
             refs.append(entry); self._save_persona_refs(root,refs)
             self.ctx.logger.info(f"[MaiLife] 默认角色参考图已上传 {entry['name']} ({entry['bytes']}B)")
             return {"success":True,"applied":entry,"refs":refs}
@@ -760,14 +787,32 @@ class MaiLifePlugin(MaiBotPlugin):
         except Exception as exc:
             return {"success":False,"error":f"{type(exc).__name__}: {exc}"[:200]}
 
+    @API(name="webui_persona_refs_set_persona",description="WebUI 默认角色参考图设置人设标签（留空=无标签通用图，各人设未命中分组时可用）",version="1",public=False)
+    async def webui_persona_refs_set_persona(self,ref_id:str,persona:str="",**kwargs:Any)->dict[str,Any]:
+        try:
+            refs,root=self._load_persona_refs()
+            if root is None:return {"success":False,"error":"持久化数据目录不可用"}
+            entry=next((item for item in refs if str(item.get("id") or "")==str(ref_id)),None)
+            if entry is None:return {"success":False,"error":f"参考图不存在: {ref_id}"}
+            tag=" ".join(str(persona or "").split())[:40]
+            if tag:entry["persona"]=tag
+            else:entry.pop("persona",None)
+            self._save_persona_refs(root,refs)
+            self.ctx.logger.info(f"[MaiLife] 参考图人设标签已更新 {entry.get('name')} -> {tag or '(通用)'}")
+            return {"success":True,"applied":{"ref_id":str(ref_id),"persona":tag},"refs":refs}
+        except Exception as exc:
+            return {"success":False,"error":f"{type(exc).__name__}: {exc}"[:200]}
+
     async def _submit_persona_ref_draw(self,session_id:str,payload:dict[str,Any]|None,day:str="",channel:str="private")->bool:
         """按默认角色参考图直发图生图：参考图 Base64 + 当前日程场景交给 drawpic，成品自动发进会话。
 
         Issue #26 异步状态语义：携带稳定 request_id 提交；RPC 结果未知（超时/中断）时
         登记未确认状态并先查询原请求——下游可能已受理，绝不据此自动重画（重复任务与重复计费）。
         """
-        refs,root=self._load_persona_refs()
-        if not refs or root is None:return False
+        refs,root,ref_tag=self._persona_refs_scoped()
+        if not refs or root is None:
+            if ref_tag:self.ctx.logger.info(f"[MaiLife] 参考图直发跳过: 人设标签「{ref_tag}」下暂无可用参考图")
+            return False
         scene,scene_ok=await self._persona_ref_scene(payload)
         if not scene_ok:return False
         mode=str(self.config.linkage.persona_ref_select or "first").lower()
@@ -2360,8 +2405,11 @@ class MaiLifePlugin(MaiBotPlugin):
             await self._check_drawpic()
         if not (self.config.linkage.drawpic_enabled and self._drawpic_loaded is True):
             return await self._send_command(kwargs,"麦麦绘图联动未启用。")
-        refs,root=self._load_persona_refs()
-        if not refs or root is None:return await self._send_command(kwargs,"还没有上传角色参考图（系统与配置页）。")
+        refs,root,ref_tag=self._persona_refs_scoped()
+        if not refs or root is None:
+            return await self._send_command(kwargs,
+                f"当前人设标签「{ref_tag}」还没有可用参考图（系统与配置页上传并打标签，或检查「参考图人设分组」规则）。" if ref_tag
+                else "还没有上传角色参考图（系统与配置页）。")
         day=self._env.now().strftime("%Y-%m-%d")
         request=self._persona_ref_request.get(session) or {}
         if request.get("day")==day and request.get("state")=="unconfirmed":
@@ -2381,8 +2429,11 @@ class MaiLifePlugin(MaiBotPlugin):
             await self._check_drawpic()
         if not (self.config.linkage.drawpic_enabled and self._drawpic_loaded is True):
             return await self._send_command(kwargs,"麦麦绘图联动未启用。")
-        refs,root=self._load_persona_refs()
-        if not refs or root is None:return await self._send_command(kwargs,"还没有上传角色参考图（系统与配置页）。")
+        refs,root,ref_tag=self._persona_refs_scoped()
+        if not refs or root is None:
+            return await self._send_command(kwargs,
+                f"当前人设标签「{ref_tag}」还没有可用参考图（系统与配置页上传并打标签，或检查「参考图人设分组」规则）。" if ref_tag
+                else "还没有上传角色参考图（系统与配置页）。")
         day=self._env.now().strftime("%Y-%m-%d")
         request=self._persona_ref_request.get(session) or {}
         if request.get("day")==day and request.get("state")=="unconfirmed":
@@ -3638,6 +3689,7 @@ class MaiLifePlugin(MaiBotPlugin):
                 "drawpic_detected":_switch(self._drawpic_loaded is True),
                 "max":self.PERSONA_REF_MAX,
                 "items":[{"id":str(item.get("id") or ""), "name":str(item.get("name") or ""),
+                          "persona":str(item.get("persona") or ""),
                           "bytes":int(item.get("bytes") or 0),"added_at":float(item.get("added_at") or 0)}
                          for item in refs]}
 

@@ -77,11 +77,37 @@
           "api": "webui_date_write",
           "version": "1",
           "parameters": {
-            "event_name": {"type": "string", "required": true, "max_length": 120},
-            "user_id": {"type": "string", "required": true, "max_length": 64},
-            "calendar": {"type": "string", "required": true, "choices": ["solar", "lunar"]},
-            "recurrence": {"type": "string", "required": true, "choices": ["none", "annual"]},
-            "date": {"type": "string", "required": true, "max_length": 10}
+            "event_name": {
+              "type": "string",
+              "required": true,
+              "max_length": 120
+            },
+            "user_id": {
+              "type": "string",
+              "required": true,
+              "max_length": 64
+            },
+            "calendar": {
+              "type": "string",
+              "required": true,
+              "choices": [
+                "solar",
+                "lunar"
+              ]
+            },
+            "recurrence": {
+              "type": "string",
+              "required": true,
+              "choices": [
+                "none",
+                "annual"
+              ]
+            },
+            "date": {
+              "type": "string",
+              "required": true,
+              "max_length": 10
+            }
           },
           "confirmation": "确认写入这条重要日期？公历存 YYYY-MM-DD，农历按平月存 月-日。"
         },
@@ -89,7 +115,11 @@
           "api": "webui_date_delete",
           "version": "1",
           "parameters": {
-            "date_id": {"type": "integer", "required": true, "minimum": 1}
+            "date_id": {
+              "type": "integer",
+              "required": true,
+              "minimum": 1
+            }
           },
           "confirmation": "确认删除这条重要日期？删除后不再提醒。"
         },
@@ -97,8 +127,15 @@
           "api": "webui_date_candidate_set",
           "version": "1",
           "parameters": {
-            "candidate_id": {"type": "integer", "required": true, "minimum": 1},
-            "approve": {"type": "boolean", "required": true}
+            "candidate_id": {
+              "type": "integer",
+              "required": true,
+              "minimum": 1
+            },
+            "approve": {
+              "type": "boolean",
+              "required": true
+            }
           },
           "confirmation": "确认处理这条日期候选？确认将按建议日期写入正式日期，驳回将标记忽略。"
         },
@@ -106,36 +143,87 @@
           "api": "webui_book_import_check",
           "version": "1",
           "parameters": {
-            "title": {"type": "string", "required": true, "max_length": 160},
-            "sha256": {"type": "string", "required": false, "max_length": 64},
-            "total_chars": {"type": "integer", "required": true, "minimum": 0}
+            "title": {
+              "type": "string",
+              "required": true,
+              "max_length": 160
+            },
+            "sha256": {
+              "type": "string",
+              "required": false,
+              "max_length": 64
+            },
+            "total_chars": {
+              "type": "integer",
+              "required": true,
+              "minimum": 0
+            }
           }
         },
         "book_import_begin": {
           "api": "webui_book_import_begin",
           "version": "1",
           "parameters": {
-            "title": {"type": "string", "required": true, "max_length": 160},
-            "author": {"type": "string", "required": false, "max_length": 120},
-            "sha256": {"type": "string", "required": false, "max_length": 64},
-            "total_chars": {"type": "integer", "required": true, "minimum": 1},
-            "privacy": {"type": "string", "required": true, "choices": ["private", "public"]}
+            "title": {
+              "type": "string",
+              "required": true,
+              "max_length": 160
+            },
+            "author": {
+              "type": "string",
+              "required": false,
+              "max_length": 120
+            },
+            "sha256": {
+              "type": "string",
+              "required": false,
+              "max_length": 64
+            },
+            "total_chars": {
+              "type": "integer",
+              "required": true,
+              "minimum": 1
+            },
+            "privacy": {
+              "type": "string",
+              "required": true,
+              "choices": [
+                "private",
+                "public"
+              ]
+            }
           }
         },
         "book_import_chunk": {
           "api": "webui_book_import_chunk",
           "version": "1",
           "parameters": {
-            "import_id": {"type": "string", "required": true, "max_length": 64},
-            "seq": {"type": "integer", "required": true, "minimum": 0},
-            "text": {"type": "string", "required": true, "max_length": 65536}
+            "import_id": {
+              "type": "string",
+              "required": true,
+              "max_length": 64
+            },
+            "seq": {
+              "type": "integer",
+              "required": true,
+              "minimum": 0
+            },
+            "text": {
+              "type": "string",
+              "required": true,
+              "max_length": 65536
+            }
           }
         },
         "book_import_commit": {
           "api": "webui_book_import_commit",
           "version": "1",
           "parameters": {
-            "import_id": {"type": "string", "required": true, "max_length": 64}
+            "import_id": {
+              "type": "string",
+              "required": true,
+              "max_length": 64
+            }
           },
           "confirmation": "确认把这本书导入书柜？导入后默认仅主人可见。"
         },
@@ -143,23 +231,43 @@
           "api": "webui_book_import_cancel",
           "version": "1",
           "parameters": {
-            "import_id": {"type": "string", "required": true, "max_length": 64}
+            "import_id": {
+              "type": "string",
+              "required": true,
+              "max_length": 64
+            }
           }
         },
         "book_read": {
           "api": "webui_book_read",
           "version": "1",
           "parameters": {
-            "document_id": {"type": "string", "required": true, "max_length": 64},
-            "offset": {"type": "integer", "required": true, "minimum": 0},
-            "limit": {"type": "integer", "required": true, "minimum": 1, "maximum": 20000}
+            "document_id": {
+              "type": "string",
+              "required": true,
+              "max_length": 64
+            },
+            "offset": {
+              "type": "integer",
+              "required": true,
+              "minimum": 0
+            },
+            "limit": {
+              "type": "integer",
+              "required": true,
+              "minimum": 1,
+              "maximum": 20000
+            }
           }
         },
         "schedule_template_save": {
           "api": "webui_schedule_template_save",
           "version": "1",
           "parameters": {
-            "template": {"type": "object", "required": true}
+            "template": {
+              "type": "object",
+              "required": true
+            }
           },
           "confirmation": "确认保存日程模板？保存后以后生成时生效（今天已生成的日程不变）。"
         },
@@ -190,22 +298,42 @@
         }
       },
       "uploads": {
-        "refs": {"action": "refs_upload", "image_max_edge": 2048}
+        "refs": {
+          "action": "refs_upload",
+          "image_max_edge": 2048
+        }
       },
       "actions": {
         "refs_upload": {
           "api": "webui_persona_refs_upload",
           "version": "1",
           "parameters": {
-            "upload_id": {"type": "string", "required": true, "max_length": 128},
-            "name": {"type": "string", "required": false, "max_length": 60}
+            "upload_id": {
+              "type": "string",
+              "required": true,
+              "max_length": 128
+            },
+            "name": {
+              "type": "string",
+              "required": false,
+              "max_length": 60
+            },
+            "persona": {
+              "type": "string",
+              "required": false,
+              "max_length": 40
+            }
           }
         },
         "refs_delete": {
           "api": "webui_persona_refs_delete",
           "version": "1",
           "parameters": {
-            "ref_id": {"type": "string", "required": true, "max_length": 64}
+            "ref_id": {
+              "type": "string",
+              "required": true,
+              "max_length": 64
+            }
           },
           "confirmation": "确认删除这张默认角色参考图？删除后自拍场景回退文字引导。"
         },
@@ -213,11 +341,40 @@
           "api": "webui_config_save",
           "version": "1",
           "parameters": {
-            "section": {"type": "string", "required": true, "max_length": 64},
-            "key": {"type": "string", "required": true, "max_length": 64},
-            "value": {"type": "string", "required": true, "max_length": 4000}
+            "section": {
+              "type": "string",
+              "required": true,
+              "max_length": 64
+            },
+            "key": {
+              "type": "string",
+              "required": true,
+              "max_length": 64
+            },
+            "value": {
+              "type": "string",
+              "required": true,
+              "max_length": 4000
+            }
           },
           "confirmation": "确认修改该配置项？保存后写入 config.toml 并立即热生效。"
+        },
+        "refs_set_persona": {
+          "api": "webui_persona_refs_set_persona",
+          "version": "1",
+          "parameters": {
+            "ref_id": {
+              "type": "string",
+              "required": true,
+              "max_length": 64
+            },
+            "persona": {
+              "type": "string",
+              "required": false,
+              "max_length": 40
+            }
+          },
+          "confirmation": "确认更新这张参考图的人设标签？留空表示通用图（人设分组未命中时可用）。"
         }
       }
     }
