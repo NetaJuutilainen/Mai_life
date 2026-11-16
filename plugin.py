@@ -810,7 +810,8 @@ class MaiLifePlugin(MaiBotPlugin):
             self._persona_ref_request.pop(session_id,None)  # 确认从未受理：允许重新提交
         request_id=f"refdraw-{uuid.uuid4().hex[:24]}"
         try:
-            response=await self.ctx.api.call("maimai-drawpic-plugin.drawpic_submit_v2",version="2",
+            # 2026-11-17 适配 drawpic 2.3.0：统一 API 去版本后缀（submit_v2→submit，不再传 version）
+            response=await self.ctx.api.call("maimai-drawpic-plugin.drawpic_submit",
                                              prompt=prompt,stream_id=session_id,source_images=images,
                                              task_type="edit_image",request_id=request_id)
         except Exception as exc:
@@ -942,15 +943,18 @@ class MaiLifePlugin(MaiBotPlugin):
         return min(refs,key=lambda item:float(item.get("last_used") or 0)) if refs else None
 
     async def _query_persona_ref_request(self,request_id:str)->bool:
-        """按 request_id 查询原提交：True=记录存在（已受理、状态未知）；False=确认不存在（可安全重试）。
-        查询接口自身失败按「存在」处理——宁可少画一次，不多画一张。"""
+        """按 request_id 查询原提交（2026-11-17 适配 drawpic 2.3.0 统一 API）：恒返回 True=不据此自动重画。
+        2.3.0 起 REQUEST_NOT_FOUND 只代表「保留期内无记录」，不证明从未受理（上游明示不能据此重新生成）；
+        查到任务=已受理，查不到/失败=状态未知——宁可少画一次，不多画一张。"""
         if not request_id:return True
         try:
-            response=await self.ctx.api.call("maimai-drawpic-plugin.drawpic_request_v2",version="2",
+            response=await self.ctx.api.call("maimai-drawpic-plugin.drawpic_request",
                                              request_id=request_id)
         except Exception:
             return True  # 查询失败按存在处理，避免重复创建任务
-        return bool(isinstance(response,dict) and response.get("accepted") is True and response.get("record"))
+        found=bool(isinstance(response,dict) and response.get("status") not in (None,"not_accepted"))
+        self.ctx.logger.info(f"[MaiLife] 参考图原请求查询: request_id={request_id} found={found}（无论结果均不重画）")
+        return True
 
     async def _submit_persona_ref_for_turn(
         self,session:str,payload:dict[str,Any],day:str,turn:dict[str,Any],
