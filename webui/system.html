@@ -1023,19 +1023,40 @@
   document.getElementById('refs-list').addEventListener('click', async (e) => {
     const tagBtn = e.target.closest('[data-ref-tag]');
     if (tagBtn) {
+      // 内联编辑器：宿主 iframe sandbox 无 allow-modals，原生 prompt 被静默屏蔽，不可用（2026-11-17）。
+      const row = tagBtn.closest('.ml-cfg-kv');
+      if (row.querySelector('.ml-ref-tag-editor')) return;
       const cur = tagBtn.dataset.tag || '';
-      const next = window.prompt('人设标签（留空=通用图；人设分组命中时只选对应标签的图）', cur);
-      if (next === null) return;
+      const editor = document.createElement('span');
+      editor.className = 'ml-ref-tag-editor';
+      editor.style.cssText = 'display:inline-flex;gap:4px;align-items:center;margin-left:8px;';
+      editor.innerHTML =
+        '<input type="text" class="ml-cfg-input" style="width:150px;" maxlength="40" placeholder="留空=通用图">'
+        + '<button type="button" class="ml-cfg-act ok">保存</button>'
+        + '<button type="button" class="ml-cfg-act cancel">取消</button>';
+      tagBtn.after(editor);
       tagBtn.disabled = true;
-      try {
-        const res = await window.maibot.action('refs_set_persona', { ref_id: tagBtn.dataset.refTag, persona: next.trim() });
-        if (res && res.success === false) throw new Error(res.error || '设置失败');
-        await refreshAdmin();
-      } catch (err) {
-        tagBtn.disabled = false;
-        document.getElementById('error-text').textContent = `参考图标签设置失败：${err?.message || String(err)}`;
-        document.getElementById('error-banner').classList.add('active');
-      }
+      const input = editor.querySelector('input');
+      input.value = cur; input.focus(); input.select();
+      const cleanup = () => { editor.remove(); tagBtn.disabled = false; };
+      editor.querySelector('.ok').addEventListener('click', async () => {
+        const next = input.value.trim();
+        try {
+          const res = await window.maibot.action('refs_set_persona', { ref_id: tagBtn.dataset.refTag, persona: next });
+          if (res && res.success === false) throw new Error(res.error || '设置失败');
+          await refreshAdmin();
+          cleanup();
+        } catch (err) {
+          cleanup();
+          document.getElementById('error-text').textContent = `参考图标签设置失败：${err?.message || String(err)}`;
+          document.getElementById('error-banner').classList.add('active');
+        }
+      });
+      editor.querySelector('.cancel').addEventListener('click', cleanup);
+      input.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') editor.querySelector('.ok').click();
+        if (ev.key === 'Escape') cleanup();
+      });
       return;
     }
     const del = e.target.closest('[data-ref-del]');
