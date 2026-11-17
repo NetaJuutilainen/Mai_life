@@ -2370,9 +2370,11 @@ class MaiLifePlugin(MaiBotPlugin):
             self._command_replies=CommandReplyService(self.ctx,getattr(self.ctx,"logger",None))
         return self._command_replies
 
-    async def _send_command(self,kwargs:dict[str,Any],text:str)->tuple[bool,str,int]:
+    async def _send_command(self,kwargs:dict[str,Any],text:str,skip_access:bool=False)->tuple[bool,str,int]:
         uid=str(kwargs.get("user_id") or "")
-        if not await self._command_access(kwargs):text=PRIVATE_COMMAND_ACCESS_DENIED
+        # 2026-11-18：内层重查会把群聊回复一律替换成拒绝文案——调用方已做更细门禁时用 skip_access 跳过
+        #（cmd_selfie 群聊管理员放行后，成功回复曾被这里劫持替换成拒绝文案，图已画但用户看到的却是拒绝）。
+        if not skip_access and not await self._command_access(kwargs):text=PRIVATE_COMMAND_ACCESS_DENIED
         stream_id=str(kwargs.get("stream_id") or ""); group_id=str(kwargs.get("group_id") or "")
         platform=str(kwargs.get("platform") or "qq"); service=self._require_command_replies()
         try:
@@ -2432,7 +2434,7 @@ class MaiLifePlugin(MaiBotPlugin):
         if request.get("day")==day and request.get("state")=="unconfirmed":
             return await self._send_command(kwargs,"上一次自拍还在确认中，稍后再试。")
         self._spawn_transient(self._submit_persona_ref_draw(session,None,day,channel="group" if group_id else "command"),f"mai-life-selfie-{session}")
-        return await self._send_command(kwargs,"已开始生成自拍，完成后自动发送。")
+        return await self._send_command(kwargs,"已开始生成自拍，完成后自动发送。",skip_access=True)
 
     @Command(name="/日程漫画",pattern=r"(?:/日程漫画|/麦麦漫画|/maimai_comic)(?=\s|$)",description="把今天的生活画成一页漫画分镜（私聊）")
     async def cmd_comic(self,**kwargs:Any)->tuple[bool,str,int]:
