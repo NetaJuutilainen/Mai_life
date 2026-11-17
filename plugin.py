@@ -2404,10 +2404,16 @@ class MaiLifePlugin(MaiBotPlugin):
     async def cmd_selfie(self,**kwargs:Any)->tuple[bool,str,int]:
         session=str(kwargs.get("stream_id") or "")
         group_id=str(kwargs.get("group_id") or "").strip()
+        uid_dbg=str(kwargs.get("user_id") or "")
+        # 2026-11-18 双派发诊断：同一秒既出拒绝文案又出图——记录每次派发的身份输入与门禁判定。
+        self.ctx.logger.info(f"[MaiLife] /自拍 调试: group_id={group_id!r} user_id={uid_dbg!r} "
+                             f"is_local_operator={kwargs.get('is_local_operator')!r} keys={sorted(map(str,kwargs.keys()))}")
         if not await self._command_access(kwargs):
             # 2026-11-18 方案 A：群聊放行主人/管理员——命令直达不做全员开放，防刷交给身份。
             # 群命令走 group 通道选图（group_persona_ref_select），与群联动直发同一提交口。
-            if not (group_id and await self._is_owner_or_admin(str(kwargs.get("user_id") or ""))):
+            admin_ok=bool(group_id) and await self._is_owner_or_admin(uid_dbg)
+            self.ctx.logger.info(f"[MaiLife] /自拍 门禁: _command_access=False 群管理员放行={admin_ok}")
+            if not admin_ok:
                 return await self._send_command(kwargs,PRIVATE_COMMAND_ACCESS_DENIED)
         if not self._ready or not self._env:return await self._send_command(kwargs,"服务尚未初始化。")
         if self.config.linkage.drawpic_enabled and self._drawpic_loaded is not True:
