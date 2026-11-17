@@ -2400,10 +2400,15 @@ class MaiLifePlugin(MaiBotPlugin):
         if not await self._command_access(kwargs):return await self._send_command(kwargs,PRIVATE_COMMAND_ACCESS_DENIED)
         return await self._send_command(kwargs,await self._status_report())
 
-    @Command(name="/自拍",pattern=r"(?:/自拍|/selfie)(?=\s|$)",description="立即生成一张带角色参考图的自拍（私聊）")
+    @Command(name="/自拍",pattern=r"(?:/自拍|/selfie)(?=\s|$)",description="立即生成一张带角色参考图的自拍（私聊；群聊仅主人/管理员）")
     async def cmd_selfie(self,**kwargs:Any)->tuple[bool,str,int]:
         session=str(kwargs.get("stream_id") or "")
-        if not await self._command_access(kwargs):return await self._send_command(kwargs,PRIVATE_COMMAND_ACCESS_DENIED)
+        group_id=str(kwargs.get("group_id") or "").strip()
+        if not await self._command_access(kwargs):
+            # 2026-11-18 方案 A：群聊放行主人/管理员——命令直达不做全员开放，防刷交给身份。
+            # 群命令走 group 通道选图（group_persona_ref_select），与群联动直发同一提交口。
+            if not (group_id and await self._is_owner_or_admin(str(kwargs.get("user_id") or ""))):
+                return await self._send_command(kwargs,PRIVATE_COMMAND_ACCESS_DENIED)
         if not self._ready or not self._env:return await self._send_command(kwargs,"服务尚未初始化。")
         if self.config.linkage.drawpic_enabled and self._drawpic_loaded is not True:
             # 2026-11-17 命令时点复检：消除重载启动时序竞态（drawpic 常晚于本插件完成注册）
@@ -2420,7 +2425,7 @@ class MaiLifePlugin(MaiBotPlugin):
         request=self._persona_ref_request.get(session) or {}
         if request.get("day")==day and request.get("state")=="unconfirmed":
             return await self._send_command(kwargs,"上一次自拍还在确认中，稍后再试。")
-        self._spawn_transient(self._submit_persona_ref_draw(session,None,day,channel="command"),f"mai-life-selfie-{session}")
+        self._spawn_transient(self._submit_persona_ref_draw(session,None,day,channel="group" if group_id else "command"),f"mai-life-selfie-{session}")
         return await self._send_command(kwargs,"已开始生成自拍，完成后自动发送。")
 
     @Command(name="/日程漫画",pattern=r"(?:/日程漫画|/麦麦漫画|/maimai_comic)(?=\s|$)",description="把今天的生活画成一页漫画分镜（私聊）")
